@@ -38,11 +38,12 @@ DEFAULT_EVENTS = [
     {
         "id": "m1",
         "title": "Coffee & Conversation",
-        "when": "بعد از ظهر چهارشنبه", 
+        "when": "", 
         "place": "کافه کتاب آفتاب",  # shown to admins only until approved
         "maps": "https://nshn.ir/0arb1dvBQJGyMh",
         "price": "Free",
-        "desc": "گفتگوهای آزاد با موضوع‌های روز؛ همه سطوح خوش آمدید.",
+        "desc": "گفتگوهای آزاد با موضوع‌های روز؛ همه سطوح خوش آمدید.", 
+
     }
 ]
 
@@ -111,12 +112,21 @@ def get_event(ev_id):
     return next((e for e in EVENTS if e.get("id") == ev_id), None)
 
 def build_main_menu():
-    buttons = [
-        [InlineKeyboardButton("🎉 رویدادهای پیش‌رو", callback_data="list_events")],
-        [InlineKeyboardButton("📝 ثبت‌نام", callback_data="register")],
-        [InlineKeyboardButton("❔ سوالات متداول", callback_data="faq")],
-        [InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")],
-    ]
+   buttons = [
+    [InlineKeyboardButton("🎉 رویدادهای پیش‌رو", callback_data="list_events")],
+    [InlineKeyboardButton("📝 ثبت‌نام", callback_data="register")],
+    [InlineKeyboardButton("❔ سوالات متداول", callback_data="faq")],
+    [InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")],
+    [InlineKeyboardButton("📍 آدرس کافه", callback_data="location")],
+    [InlineKeyboardButton("🥤 منوی کافه", callback_data="menu")],
+    [InlineKeyboardButton("📚 باشگاه کتابخوانی", callback_data="book_club")],
+    [InlineKeyboardButton("🎶 موسیقی زنده", callback_data="live_music")],
+    [InlineKeyboardButton("📰 خبرنامه کافه", callback_data="newsletter")],
+    [InlineKeyboardButton("👫 دوستان جدید", callback_data="networking")],
+    [InlineKeyboardButton("💡 پیشنهاد ایده", callback_data="suggestion")],
+    [InlineKeyboardButton("⭐ نظر شما", callback_data="feedback")]
+]
+
     return InlineKeyboardMarkup(buttons)
 
 def build_events_buttons(compact=False):
@@ -558,4 +568,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "CBot (webhook) is running."}
+
 
