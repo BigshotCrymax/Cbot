@@ -34,19 +34,18 @@ GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))     # admin group/chan
 GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")     # JSON string or None
 SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
 
-# EVENTS & LINKS
-# Each event may contain: id, title, when, place, maps, price, desc
 DEFAULT_EVENTS = [
     {
         "id": "m1",
         "title": "Coffee & Conversation",
-        "when": "2025-10-12 18:30",
-        "place": "Café République",  # shown to admins only until approved
-        "maps": "https://maps.google.com/?q=Café+République",
+        "when": "بعد از ظهر چهارشنبه", 
+        "place": "کافه کتاب آفتاب",  # shown to admins only until approved
+        "maps": "https://nshn.ir/0arb1dvBQJGyMh",
         "price": "Free",
         "desc": "گفتگوهای آزاد با موضوع‌های روز؛ همه سطوح خوش آمدید.",
     }
 ]
+
 try:
     EVENTS = json.loads(os.environ.get("EVENTS_JSON", "")) or DEFAULT_EVENTS
     if not isinstance(EVENTS, list):
@@ -559,3 +558,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "CBot (webhook) is running."}
+
