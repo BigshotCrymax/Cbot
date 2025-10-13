@@ -1,13 +1,5 @@
-# CBot.py — Chill & Chat Community Bot
-# Mode: Webhook (FastAPI + Uvicorn)
+# CBot.py — Chill & Chat Community Bot (Webhook + FastAPI/Uvicorn)
 # Deps: python-telegram-bot==20.3, fastapi, uvicorn
-#
-# UX rules implemented:
-# - ONLY "شروع مجدد 🔄" in reply keyboard (global), except at phone step (temporary contact keyboard)
-# - Per-step Back button (↩️) throughout the registration flow
-# - Do NOT show event address/maps to users until admin Approve
-# - Admin group receives full details; on Approve, user receives full location & link
-# - Extra café buttons with static info messages
 
 import os
 import json
@@ -30,13 +22,19 @@ from telegram.ext import (
 # =========================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")                       # REQUIRED
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")                   # REQUIRED
-GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))     # admin group/channel id (negative for groups)
+GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))     # Admin group/channel ID (negative for groups)
 
-# Google Sheets (OFF by default — provide creds to enable)
-GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")     # optional JSON string
+# Optional envs
+SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "englishclub_support")
+CHANNEL_URL = os.environ.get("CHANNEL_URL", "")               # e.g. https://t.me/chillandchatclub
+GROUP_URL   = os.environ.get("GROUP_URL", "")                 # e.g. https://t.me/chillandchatcommunity
+INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")           # e.g. https://instagram.com/chillandchat
+
+# Google Sheets (OFF by default unless creds provided)
+GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")     # JSON string or None
 SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
 
-# Events (address hidden from users until approved)
+# Events (users won't see address/maps until approval)
 DEFAULT_EVENTS = [
     {
         "id": "m1",
@@ -83,17 +81,13 @@ RULES = (
     "• اگر منصرف شدی زودتر خبر بده."
 )
 
-# Static info for extra buttons
-INFO_TEXTS = {
-    "location": "📍 آدرس کافه پس از تایید ثبت‌نام بهت ارسال می‌شود.",
-    "menu": "🥤 منوی کافه: قهوه‌های تخصصی، چای، نوشیدنی‌های سرد و اسنک‌های سبک.",
-    "book_club": "📚 باشگاه کتابخوانی: هر دو هفته یک‌بار درباره یک کتاب انگلیسی گپ می‌زنیم.",
-    "live_music": "🎶 موسیقی زنده: بعضی شب‌ها اجرای آکوستیک داریم؛ زمان‌بندی از طریق کانال اعلام میشه.",
-    "newsletter": "📰 خبرنامه: به‌زودی فرم عضویت فعال میشه تا خبرها رو زودتر بگیری.",
-    "networking": "👫 دوستان جدید: فرصت آشنایی با آدم‌های جدید و تمرین مکالمه در فضای دوستانه.",
-    "suggestion": "💡 پیشنهاد ایده: ایده‌ات رو می‌تونی برای ادمین بفرستی؛ خوشحال می‌شیم!",
-    "feedback": "⭐ نظر شما: بازخوردت برامون مهمه؛ به بهتر شدن فضا کمک می‌کنه.",
-}
+SOCIAL_TEXT = lambda: (
+    "🌐 **ما را در شبکه‌های اجتماعی دنبال کن:**\n\n"
+    + (f"📢 [کانال تلگرام]({CHANNEL_URL})\n" if CHANNEL_URL else "")
+    + (f"💬 [گروه تلگرام]({GROUP_URL})\n" if GROUP_URL else "")
+    + (f"📸 [اینستاگرام]({INSTAGRAM_URL})\n" if INSTAGRAM_URL else "")
+    + ("\nبزودی لینک‌ها تکمیل می‌شوند." if not (CHANNEL_URL or GROUP_URL or INSTAGRAM_URL) else "")
+)
 
 # =========================
 #          HELPERS
@@ -102,7 +96,7 @@ def get_event(ev_id):
     return next((e for e in EVENTS if e.get("id") == ev_id), None)
 
 def event_text_user(ev):
-    # no address before approval
+    # address hidden until approval
     parts = [f"**{ev.get('title','')}**", f"🕒 {ev.get('when','')}"]
     if ev.get("price"): parts.append(f"💶 {ev['price']}")
     if ev.get("desc"):  parts.append(f"\n📝 {ev['desc']}")
@@ -135,7 +129,7 @@ def current_step(context):
     return nav[-1] if nav else None
 
 def clear_flow(context):
-    for k in ["nav","origin","selected_event_id","name","phone","level","note"]:
+    for k in ["nav","origin","selected_event_id","name","phone","level","note","feedback_mode"]:
         context.user_data.pop(k, None)
 
 # =========================
@@ -144,21 +138,15 @@ def clear_flow(context):
 def build_main_menu():
     buttons = [
         [InlineKeyboardButton("🎉 رویدادهای پیش‌رو", callback_data="list_events")],
-        [InlineKeyboardButton("📝 ثبت‌نام", callback_data="register")],
+        [InlineKeyboardButton("📝 ثبت‌نام سریع", callback_data="register")],
         [InlineKeyboardButton("❔ سوالات متداول", callback_data="faq")],
         [InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")],
-        [InlineKeyboardButton("📍 آدرس کافه", callback_data="location")],
-        [InlineKeyboardButton("🥤 منوی کافه", callback_data="menu")],
-        [InlineKeyboardButton("📚 باشگاه کتابخوانی", callback_data="book_club")],
-        [InlineKeyboardButton("🎶 موسیقی زنده", callback_data="live_music")],
-        [InlineKeyboardButton("📰 خبرنامه کافه", callback_data="newsletter")],
-        [InlineKeyboardButton("👫 دوستان جدید", callback_data="networking")],
-        [InlineKeyboardButton("💡 پیشنهاد ایده", callback_data="suggestion")],
-        [InlineKeyboardButton("⭐ نظر شما", callback_data="feedback")],
+        [InlineKeyboardButton("💬 ارسال نظر و پیشنهاد", callback_data="feedback_start")],
+        [InlineKeyboardButton("🌐 شبکه‌های اجتماعی", callback_data="socials")],
     ]
     return InlineKeyboardMarkup(buttons)
 
-def back_inline():  # per-step back
+def back_inline():
     return InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")]])
 
 def rules_inline():
@@ -178,7 +166,7 @@ def level_inline():
 def event_inline_register(ev_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 ثبت‌نام در همین رویداد", callback_data=f"register_{ev_id}")],
-        [InlineKeyboardButton("↩️ بازگشت", callback_data="list_events")],
+        [InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")],
     ])
 
 # =========================
@@ -196,10 +184,13 @@ async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
             await update.callback_query.edit_message_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
 
 async def render_event_list(update: Update):
-    await update.callback_query.edit_message_text("رویدادهای پیش‌رو:", reply_markup=InlineKeyboardMarkup(
-        [[InlineKeyboardButton(f"{e['title']} | {e['when']}", callback_data=f"event_{e['id']}")] for e in EVENTS] +
-        [[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]
-    ))
+    await update.callback_query.edit_message_text(
+        "رویدادهای پیش‌رو:",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(f"{e['title']} | {e['when']}", callback_data=f"event_{e['id']}")] for e in EVENTS]
+            + [[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]
+        )
+    )
 
 async def render_event_detail(update: Update, ev):
     await update.callback_query.edit_message_text(
@@ -228,7 +219,7 @@ async def render_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resize_keyboard=True, one_time_keyboard=True,
     )
     await update.effective_chat.send_message("شماره تلفنت رو وارد کن یا دکمه زیر رو بزن:", reply_markup=contact_btn)
-    # Back inline as a separate message
+    # Back inline as separate message
     await update.effective_chat.send_message("یا می‌تونی به مرحله قبل برگردی:", reply_markup=back_inline())
 
 async def render_level(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
@@ -283,7 +274,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     data = q.data
 
-    # route lvl_ early so it's not swallowed
+    # route lvl_ early
     if data.startswith("lvl_"):
         return await handle_level(update, context)
 
@@ -294,18 +285,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "back_step":
         return await go_back(update, context)
 
-    # Static info buttons
-    if data in ("location","menu","book_club","live_music","newsletter","networking","suggestion","feedback"):
-        txt = INFO_TEXTS.get(data, "ℹ️ اطلاعات به‌زودی اضافه می‌شود.")
-        return await q.edit_message_text(txt, parse_mode="Markdown",
-                                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
-
     if data == "faq":
         return await q.edit_message_text(FAQ, parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "support":
-        return await q.edit_message_text("برای پشتیبانی: @englishclub_support",
+        txt = f"🆘 برای پشتیبانی به آیدی زیر پیام بده:\n@{SUPPORT_USERNAME}"
+        return await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
+
+    if data == "socials":
+        return await q.edit_message_text(SOCIAL_TEXT(), parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "list_events":
@@ -326,8 +315,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not context.user_data.get("selected_event_id"):
                 await q.edit_message_text("یکی از رویدادها رو انتخاب کن:",
                                           reply_markup=InlineKeyboardMarkup(
-                                              [[InlineKeyboardButton(f"{e['title']} | {e['when']}", callback_data=f"event_{e['id']}")] for e in EVENTS] +
-                                              [[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]
+                                              [[InlineKeyboardButton(f"{e['title']} | {e['when']}", callback_data=f"event_{e['id']}")] for e in EVENTS]
+                                              + [[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]
                                           ))
                 push_step(context, "pick_event")
                 return
@@ -335,6 +324,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "accept_rules":
         return await render_name(update, context, edit=True)
+
+    if data == "feedback_start":
+        context.user_data["feedback_mode"] = True
+        txt = "💬 نظرت یا پیشنهادت درباره Chill & Chat چیه؟ همین‌جا برامون بفرست.\n(می‌تونی متن، عکس، ویس یا ویدیو بفرستی.)"
+        return await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
     # Admin approve/reject
     if data.startswith("approve_") or data.startswith("reject_"):
@@ -344,7 +338,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ev = get_event(ev_id)
 
             if action == "approve":
-                # Now reveal full details to user
+                # Reveal full details to user
                 if ev:
                     detail = (
                         "🎉 ثبت‌نامت تایید شد!\n\n"
@@ -373,9 +367,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     step = current_step(context)
 
+    # Global restart
     if text == "شروع مجدد 🔄":
         return await render_home(update, context)
 
+    # Feedback mode: forward any message to admin group
+    if context.user_data.get("feedback_mode"):
+        if GROUP_CHAT_ID:
+            user = update.effective_user
+            header = (
+                "💬 پیام جدید از کاربر Chill & Chat:\n"
+                f"👤 نام: {user.full_name}\n"
+                f"🆔 @{user.username}" if user.username else "🆔 —"
+            )
+            try:
+                await update.effective_chat.send_action("typing")
+            except Exception:
+                pass
+            # send header then forward original
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=header)
+            await context.bot.forward_message(
+                chat_id=GROUP_CHAT_ID,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.message.message_id
+            )
+        await update.message.reply_text("ممنون از بازخوردت 💛 پیام تو برای تیم Chill & Chat ارسال شد.", reply_markup=reply_main)
+        context.user_data["feedback_mode"] = False
+        return
+
+    # Registration flow
     if step == "pick_event":
         return  # ignore free text
 
@@ -394,6 +414,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "note":
         context.user_data["note"] = text
         return await finalize_and_send(update, context)
+
+    # otherwise ignore
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_step(context) == "phone":
@@ -425,7 +447,6 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary += f"\n📌 رویداد: {ev.get('title','')}\n🕒 زمان: {ev.get('when','')}\n(آدرس پس از تایید ارسال می‌شود.)"
     await update.effective_chat.send_message(summary, reply_markup=reply_main)
 
-    # Send to admin group
     if GROUP_CHAT_ID:
         user_chat_id = update.effective_chat.id
         approve_cb = f"approve_{user_chat_id}_{ev_id or 'NA'}"
@@ -445,9 +466,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_txt += event_text_admin(ev)
         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=admin_txt, parse_mode='Markdown', reply_markup=buttons)
 
-    # Optional: write to Google Sheets
     await maybe_write_to_sheet(u, ev)
-
     clear_flow(context)
 
 # =========================
