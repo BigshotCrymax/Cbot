@@ -44,7 +44,8 @@ DEFAULT_EVENTS = [
         "place": "کافه کتاب راوی، مشهد، بلوار احمدآباد، بلوار رضا، بین رضا ۲ و رضا ۴، پلاک ۴۳",
         "maps": "https://nshn.ir/92_b1dFoVJGfNy",
         "price": "سفارش از کافه",
-        "desc": "جلسه معارفه و یخ‌شکن: What’s your name? Where are you from? Hobbies? Why did you join? One interesting fact & a goal for this year. فضای دوستانه برای شروع مکالمه انگلیسی. 😊",
+        "desc": "Our first Chill & Chat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “Let’s get to know each other!” with simple and fun questions like ‘What’s your hobby?’ or ‘Why did you join?’ ☕🙂",
+,
     }
 ]
 
@@ -556,6 +557,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
