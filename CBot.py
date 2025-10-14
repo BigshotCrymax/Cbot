@@ -25,7 +25,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")                   # REQUIRED
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))     # Admin group/channel ID (negative for groups)
 
 # Optional envs
-SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "englishclub_support")
+SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "akamehdii")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")               # e.g. https://t.me/chillandchatclub
 GROUP_URL   = os.environ.get("GROUP_URL", "")                 # e.g. https://t.me/chillandchatcommunity
 INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")           # e.g. https://instagram.com/chillandchat
@@ -544,4 +544,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
