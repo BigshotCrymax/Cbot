@@ -477,7 +477,8 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if ev:
             admin_txt += event_text_admin(ev)
-        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=admin_txt, parse_mode='Markdown', reply_markup=buttons)
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=admin_txt, reply_markup=buttons)
+
 
     await maybe_write_to_sheet(u, ev)
     clear_flow(context)
@@ -553,6 +554,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
