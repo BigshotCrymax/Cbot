@@ -35,17 +35,19 @@ GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")     # JSON string or N
 SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
 
 # Events (users won't see address/maps until approval)
+# --- DEFAULT_EVENTS (Introduction Meeting) ---
 DEFAULT_EVENTS = [
     {
-        "id": "cry01",
-        "title": "Why do we always cry?",
+        "id": "intro01",
+        "title": "Introduction Meeting — Let’s get to know each other!",
         "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
         "place": "کافه کتاب راوی، مشهد، بلوار احمدآباد، بلوار رضا، بین رضا ۲ و رضا ۴، پلاک ۴۳",
-        "maps": "https://nshn.ir/92_b1dFoVJGfNy",
+        "maps": "https://nshn.ir/1c_bv_3z_xMvKl",
         "price": "سفارش از کافه",
-        "desc": "گفت‌وگوی دوستانه به زبان انگلیسی درباره احساسات، دلتنگی و چرایی گریه کردن — همراه با قهوه و لبخند ☕🙂",
+        "desc": "جلسه معارفه و یخ‌شکن: What’s your name? Where are you from? Hobbies? Why did you join? One interesting fact & a goal for this year. فضای دوستانه برای شروع مکالمه انگلیسی. 😊",
     }
 ]
+
 
 try:
     EVENTS = json.loads(os.environ.get("EVENTS_JSON", "")) or DEFAULT_EVENTS
@@ -554,6 +556,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
