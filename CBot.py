@@ -37,15 +37,16 @@ SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
 # Events (users won't see address/maps until approval)
 DEFAULT_EVENTS = [
     {
-        "id": "m1",
-        "title": "Coffee & Conversation",
-        "when": "2025-10-12 18:30",
-        "place": "Café République",
-        "maps": "https://maps.google.com/?q=Café+République",
-        "price": "Free",
-        "desc": "جلسه‌ی گفتگوهای آزاد انگلیسی با موضوعات سبک و دوستانه.",
+        "id": "cry01",
+        "title": "Why do we always cry?",
+        "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
+        "place": "کافه کتاب راوی، مشهد، بلوار احمدآباد، بلوار رضا، بین رضا ۲ و رضا ۴، پلاک ۴۳",
+        "maps": "https://nshn.ir/92_b1dFoVJGfNy",
+        "price": "سفارش از کافه",
+        "desc": "گفت‌وگوی دوستانه به زبان انگلیسی درباره احساسات، دلتنگی و چرایی گریه کردن — همراه با قهوه و لبخند ☕🙂",
     }
 ]
+
 try:
     EVENTS = json.loads(os.environ.get("EVENTS_JSON", "")) or DEFAULT_EVENTS
     if not isinstance(EVENTS, list):
@@ -552,6 +553,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
