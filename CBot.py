@@ -45,7 +45,6 @@ DEFAULT_EVENTS = [
         "maps": "https://nshn.ir/92_b1dFoVJGfNy",
         "price": "سفارش از کافه",
         "desc": "Our first Chill & Chat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “Let’s get to know each other!” with simple and fun questions like ‘What’s your hobby?’ or ‘Why did you join?’ ☕🙂",
-,
     }
 ]
 
@@ -557,6 +556,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
