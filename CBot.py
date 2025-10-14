@@ -154,10 +154,10 @@ def build_main_menu():
     buttons = [
         [InlineKeyboardButton("🎉 رویدادهای پیش‌رو", callback_data="list_events")],
         [InlineKeyboardButton("📝 ثبت‌نام سریع", callback_data="register")],
+        [InlineKeyboardButton("🌐 شبکه‌های اجتماعی", callback_data="socials")],
         [InlineKeyboardButton("❔ سوالات متداول", callback_data="faq")],
         [InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")],
         [InlineKeyboardButton("💬 ارسال نظر و پیشنهاد", callback_data="feedback_start")],
-        [InlineKeyboardButton("🌐 شبکه‌های اجتماعی", callback_data="socials")],
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -556,6 +556,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
