@@ -42,7 +42,7 @@ DEFAULT_EVENTS = [
         "title": "Introduction Meeting — Let’s get to know each other!",
         "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
         "place": "کافه کتاب راوی، مشهد، بلوار احمدآباد، بلوار رضا، بین رضا ۲ و رضا ۴، پلاک ۴۳",
-        "maps": "https://nshn.ir/1c_bv_3z_xMvKl",
+        "maps": "https://nshn.ir/92_b1dFoVJGfNy",
         "price": "سفارش از کافه",
         "desc": "جلسه معارفه و یخ‌شکن: What’s your name? Where are you from? Hobbies? Why did you join? One interesting fact & a goal for this year. فضای دوستانه برای شروع مکالمه انگلیسی. 😊",
     }
@@ -556,6 +556,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
