@@ -1,5 +1,9 @@
 # CBot.py — ChillChat Community Bot (Webhook + FastAPI/Uvicorn)
-# python-telegram-bot==20.3, fastapi, uvicorn
+# Requirements:
+#   python-telegram-bot==20.3
+#   fastapi
+#   uvicorn
+# (Optional) gspread, oauth2client  — only if you enable Google Sheets logging
 
 import os
 import json
@@ -237,8 +241,8 @@ async def load_state_from_pinned(application):
 
 async def save_state_to_pinned(application):
     """
-    متن خلاصه + JSON را در پیام پین‌شده دیتاسنتر به‌روزرسانی می‌کند.
-    اگر پیام وجود نداشته باشد یا ویرایش خطا دهد، پیام جدید می‌سازد و پین می‌کند.
+    متن خلاصه + JSON را در دیتاسنتر به‌روزرسانی می‌کند.
+    اگر ادیت نشد، پیام جدید می‌سازد، قبلی را آن‌پین می‌کند و جدید را پین می‌کند.
     """
     global ROSTER_MESSAGE_ID
     if not DATACENTER_CHAT_ID:
@@ -248,30 +252,36 @@ async def save_state_to_pinned(application):
     payload = _serialize_state_for_json()
     full_text = _embed_text_with_json(human, payload)
 
-    try:
-        if ROSTER_MESSAGE_ID:
+    # 1) تلاش برای ادیت پیام فعلی
+    if ROSTER_MESSAGE_ID:
+        try:
             await application.bot.edit_message_text(
                 chat_id=DATACENTER_CHAT_ID,
                 message_id=ROSTER_MESSAGE_ID,
                 text=full_text,
             )
             return
-    except Exception as e:
-        print("edit pinned roster failed, will recreate:", e)
-
-    try:
-        msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=full_text)
-        ROSTER_MESSAGE_ID = msg.message_id
-        try:
-            await application.bot.pin_chat_message(
-                chat_id=DATACENTER_CHAT_ID,
-                message_id=ROSTER_MESSAGE_ID,
-                disable_notification=True
-            )
         except Exception as e:
-            print("pin roster message failed:", e)
+            print("edit pinned roster failed -> will recreate:", e)
+
+    # 2) اگر ادیت نشد: پیام جدید بساز و جایگزین کن
+    try:
+        new_msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=full_text)
+        new_id = new_msg.message_id
+        # سعی کن قبلی را آن‌پین کنی (اگر بود)
+        try:
+            if ROSTER_MESSAGE_ID:
+                await application.bot.unpin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID)
+        except Exception as e:
+            print("unpin old roster failed:", e)
+        # جدید را پین کن
+        try:
+            await application.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=new_id, disable_notification=True)
+        except Exception as e:
+            print("pin new roster failed:", e)
+        ROSTER_MESSAGE_ID = new_id
     except Exception as e:
-        print("send roster message failed:", e)
+        print("send new roster failed:", e)
 
 async def _update_roster_message(context: ContextTypes.DEFAULT_TYPE):
     await save_state_to_pinned(context.application)
@@ -560,6 +570,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "when": info.get("when","—"),
                             "event_title": info.get("event_title","—"),
                         })
+                        # لاگ کمکی (اختیاری)
+                        print("APPROVED -> added to ROSTER:", ev_id, ROSTER.get(ev_id, []))
                         await _update_roster_message(context)
 
             await q.answer("انجام شد.")
@@ -730,6 +742,7 @@ async def auto_approve_job(context: ContextTypes.DEFAULT_TYPE):
         "when": info.get("when","—"),
         "event_title": info.get("event_title","—"),
     })
+    print("AUTO-APPROVED -> added to ROSTER:", ev_id, ROSTER.get(ev_id, []))
     await _update_roster_message(context)
 
     # notify user with full details (address/map)
@@ -800,6 +813,7 @@ async def maybe_write_to_sheet(user_info, ev):
 # =========================
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
+
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 
 application.add_handler(CommandHandler("start", cmd_start))
