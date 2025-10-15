@@ -393,6 +393,20 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
 
+# تست ساخت/آپدیت و پین پیام لیست در دیتاسنتر
+async def cmd_testpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # اگر خواستی فقط در گروه ادمین/دیتاسنتر اجازه بدی، می‌تونی این چک را فعال کنی:
+    # if update.effective_chat.id not in {GROUP_CHAT_ID, DATACENTER_CHAT_ID}:
+    #     return await update.message.reply_text("این دستور را در گروه ادمین/دیتاسنتر بزن.")
+
+    try:
+        await save_state_to_pinned(context.application)
+        await update.message.reply_text("✅ لیست شرکت‌کنندگان در گروه دیتاسنتر ساخته/آپدیت و پین شد.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ خطا در پین/آپدیت لیست: {e}")
+
+
+
 async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
 
@@ -777,6 +791,8 @@ application.add_handler(CallbackQueryHandler(handle_level, pattern=r"^lvl_"))
 application.add_handler(CallbackQueryHandler(handle_callback))
 application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(CommandHandler("testpin", cmd_testpin))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -802,5 +818,6 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running with capacity & auto-approve."}
+
 
 
