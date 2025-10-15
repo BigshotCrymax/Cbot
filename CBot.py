@@ -493,7 +493,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     detail += f"\n🔗 لینک گروه/هماهنگی:\n{link}"
                 await context.bot.send_message(chat_id=user_chat_id, text=detail)
             else:
-                await context.bot.send_message(chat_id=user_chat_id, text="⚠️ متاسفانه ثبت‌نامت تایید نشد.")
+                await context.bot.send_message(chat_id=user_chat_id, text="⚠️ متاسفانه بدلیل تکمیل ظرفیت ثبت‌نامت تایید نشد.")
 
             # Remove buttons + stamp approver
             base_text = q.message.text or ""
@@ -802,3 +802,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running with capacity & auto-approve."}
+
