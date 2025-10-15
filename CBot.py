@@ -270,7 +270,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN not set")
 
-application = ApplicationBuilder().token(BOT_TOKEN).build()
+application = ApplicationBuilder().token(BOT_TOKEN).job_queue(None).build()
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(CommandHandler("testpin", cmd_testpin))
 application.add_handler(CallbackQueryHandler(handle_callback))
@@ -299,3 +299,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot running (asyncio auto-approve OK)"}
+
