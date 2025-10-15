@@ -41,11 +41,11 @@ DEFAULT_EVENTS = [
         "id": "intro01",
         "title": "Introduction Meeting!",
         "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
-        "place": "مشهد، صیاد شیرازی 5 ، پرستو 5  ، شمارنده 31 ",
+        "place": "مشهد، صیاد شیرازی 5 ، پرستو 5 ، شمارنده 31",
         "maps": "https://nshn.ir/67_b14yf2JBebv",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "Our first ChillChat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “it will be decided in the group",
+        "desc": "Our first ChillChat session — a friendly introduction meetup! Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: it will be decided in the group.",
     }
 ]
 try:
@@ -64,7 +64,7 @@ except Exception:
 #     IN-MEMORY STORAGE
 # =========================
 # PENDING: درخواست‌های در انتظار تایید
-# هر ورودی: {name, phone, level, note, event_id, event_title, when, username, admin_msg_id, job_id}
+# هر ورودی: {name, phone, level, note, event_id, event_title, when, username, admin_msg_id, job}
 PENDING = {}  # key: user_chat_id -> dict
 # ROSTER: افراد تاییدشده به تفکیک رویداد
 # هر آیتم: {name, username, phone, when, event_title}
@@ -105,6 +105,13 @@ RULES = (
     "با رعایت این چند مورد ساده، همه‌مون تجربه‌ای عالی خواهیم داشت ☕❤️"
 )
 
+# پیام‌های ظرفیت
+CAPACITY_CANCEL_MSG = (
+    "❌ ثبت‌نام شما به دلیل *تکمیل ظرفیت* لغو شد.\n"
+    "برای شرکت در برنامه‌های بعدی، از «🎉 رویدادهای پیش‌رو» رویداد دیگری را انتخاب کنید."
+)
+CAPACITY_FULL_PREVENT_MSG = "❌ ظرفیت این رویداد تکمیل است. لطفاً رویداد دیگری را انتخاب کن."
+
 def SOCIAL_TEXT():
     return (
         "🌐 **ما را در شبکه‌های اجتماعی دنبال کن:**\n\n"
@@ -135,7 +142,7 @@ def event_text_user(ev):
         parts.append(f"👥 ظرفیت: {status}")
     if ev.get("price"): parts.append(f"💶 {ev['price']}")
     if ev.get("desc"):  parts.append(f"\n📝 {ev['desc']}")
-    parts.append("\n(آدرس کافه تا 12 ساعت قبل از برگزاری جلسه در ChillChat Official اعلام می شود.)")
+    parts.append("\n(آدرس کافه تا 12 ساعت قبل از برگزاری جلسه در ChillChat Official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
@@ -219,7 +226,7 @@ async def load_state_from_pinned(application):
     try:
         chat = await application.bot.get_chat(DATACENTER_CHAT_ID)
         pin = getattr(chat, "pinned_message", None)
-        if not pin: 
+        if not pin:
             return
         ROSTER_MESSAGE_ID = pin.message_id
         data = _extract_json_from_text(getattr(pin, "text", "") or getattr(pin, "caption", ""))
@@ -229,30 +236,42 @@ async def load_state_from_pinned(application):
         print("load_state_from_pinned error:", e)
 
 async def save_state_to_pinned(application):
+    """
+    متن خلاصه + JSON را در پیام پین‌شده دیتاسنتر به‌روزرسانی می‌کند.
+    اگر پیام وجود نداشته باشد یا ویرایش خطا دهد، پیام جدید می‌سازد و پین می‌کند.
+    """
     global ROSTER_MESSAGE_ID
     if not DATACENTER_CHAT_ID:
         return
+
     human = _build_human_roster_text()
     payload = _serialize_state_for_json()
     full_text = _embed_text_with_json(human, payload)
+
     try:
         if ROSTER_MESSAGE_ID:
-            await application.bot.edit_message_text(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, text=full_text)
-        else:
-            msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=full_text)
-            ROSTER_MESSAGE_ID = msg.message_id
-            try:
-                await application.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
-            except Exception:
-                pass
-    except Exception:
-        # اگر پیام قبلی پاک شده، یکی جدید بساز
+            await application.bot.edit_message_text(
+                chat_id=DATACENTER_CHAT_ID,
+                message_id=ROSTER_MESSAGE_ID,
+                text=full_text,
+            )
+            return
+    except Exception as e:
+        print("edit pinned roster failed, will recreate:", e)
+
+    try:
         msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=full_text)
         ROSTER_MESSAGE_ID = msg.message_id
         try:
-            await application.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
-        except Exception:
-            pass
+            await application.bot.pin_chat_message(
+                chat_id=DATACENTER_CHAT_ID,
+                message_id=ROSTER_MESSAGE_ID,
+                disable_notification=True
+            )
+        except Exception as e:
+            print("pin roster message failed:", e)
+    except Exception as e:
+        print("send roster message failed:", e)
 
 async def _update_roster_message(context: ContextTypes.DEFAULT_TYPE):
     await save_state_to_pinned(context.application)
@@ -395,17 +414,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تست ساخت/آپدیت و پین پیام لیست در دیتاسنتر
 async def cmd_testpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # اگر خواستی فقط در گروه ادمین/دیتاسنتر اجازه بدی، می‌تونی این چک را فعال کنی:
-    # if update.effective_chat.id not in {GROUP_CHAT_ID, DATACENTER_CHAT_ID}:
-    #     return await update.message.reply_text("این دستور را در گروه ادمین/دیتاسنتر بزن.")
-
     try:
         await save_state_to_pinned(context.application)
         await update.message.reply_text("✅ لیست شرکت‌کنندگان در گروه دیتاسنتر ساخته/آپدیت و پین شد.")
     except Exception as e:
         await update.message.reply_text(f"⚠️ خطا در پین/آپدیت لیست: {e}")
 
-
+# نمایش سریع وضعیت فعلی لیست (in-memory)
+async def cmd_roster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        human = _build_human_roster_text()
+        await update.message.reply_text("📋 وضعیت فعلی (in-memory):\n\n" + human[:3800])
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ خطا در نمایش لیست: {e}")
 
 async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
@@ -463,7 +484,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if target_ev and target_ev.get("capacity") and remaining_capacity(target_ev) <= 0:
             return await q.edit_message_text(
-                "❌ ظرفیت این رویداد تکمیل است.\nلطفاً رویداد دیگری را انتخاب کن.",
+                CAPACITY_FULL_PREVENT_MSG,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]])
             )
         return await render_rules(update, context)
@@ -507,7 +528,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     detail += f"\n🔗 لینک گروه/هماهنگی:\n{link}"
                 await context.bot.send_message(chat_id=user_chat_id, text=detail)
             else:
-                await context.bot.send_message(chat_id=user_chat_id, text="⚠️ متاسفانه بدلیل تکمیل ظرفیت ثبت‌نامت تایید نشد.")
+                await context.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
 
             # Remove buttons + stamp approver
             base_text = q.message.text or ""
@@ -616,7 +637,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Capacity check just before sending to admin
     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
-        await update.effective_chat.send_message("❌ ظرفیت این رویداد تکمیل است. لطفاً رویداد دیگری را انتخاب کن.", reply_markup=reply_main)
+        await update.effective_chat.send_message(CAPACITY_CANCEL_MSG, reply_markup=reply_main)
         clear_flow(context)
         return
 
@@ -684,18 +705,15 @@ async def auto_approve_job(context: ContextTypes.DEFAULT_TYPE):
         return  # already handled by admin
     ev = get_event(ev_id)
     if not ev:
-        # remove pending anyway
         PENDING.pop(user_chat_id, None)
         return
 
     # capacity check
     if ev.get("capacity") and remaining_capacity(ev) <= 0:
-        # ظرفیت پر شده؛ به کاربر خبر بده و پیام ادمین رو حذف کن
         try:
-            await context.bot.send_message(chat_id=user_chat_id, text="❌ متاسفانه ظرفیت این رویداد تکمیل شد.")
+            await context.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
         except Exception:
             pass
-        # delete admin msg if exists
         try:
             if info.get("admin_msg_id"):
                 await context.bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=info["admin_msg_id"])
@@ -704,7 +722,7 @@ async def auto_approve_job(context: ContextTypes.DEFAULT_TYPE):
         PENDING.pop(user_chat_id, None)
         return
 
-    # auto-approve: add to roster (only name/username/phone in roster list)
+    # auto-approve: add to roster
     ROSTER.setdefault(ev_id, []).append({
         "name": info.get("name","—"),
         "username": info.get("username"),
@@ -740,7 +758,6 @@ async def auto_approve_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # remove from pending
     PENDING.pop(user_chat_id, None)
 
 # =========================
@@ -792,7 +809,7 @@ application.add_handler(CallbackQueryHandler(handle_callback))
 application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(CommandHandler("testpin", cmd_testpin))
-
+application.add_handler(CommandHandler("roster",  cmd_roster))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -818,6 +835,3 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running with capacity & auto-approve."}
-
-
-
