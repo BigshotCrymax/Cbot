@@ -1,6 +1,6 @@
 # CBot.py — ChillChat Community Bot (Webhook + FastAPI/Uvicorn)
 # Requirements:
-#   python-telegram-bot==20.3
+#   python-telegram-bot==20.3  (با extra: [job-queue])
 #   fastapi
 #   uvicorn
 # (Optional) gspread, oauth2client  — only if you enable Google Sheets logging
@@ -191,6 +191,9 @@ def _build_human_roster_text():
     if not ROSTER:
         return "📋 لیست تاییدشده‌ها (DataCenter)\n— هنوز کسی تایید نشده."
     lines = ["📋 لیست تاییدشده‌ها (DataCenter)"]
+
+    event_ids = {e["id"] for e in EVENTS}
+    # رویدادهای تعریف‌شده
     for ev in EVENTS:
         ev_id = ev["id"]
         people = ROSTER.get(ev_id, [])
@@ -203,6 +206,19 @@ def _build_human_roster_text():
                 uname = f"@{r['username']}" if r.get("username") else "—"
                 phone = r.get("phone","—")
                 lines.append(f"  {i}. {r['name']} | {uname} | {phone}")
+
+    # ev_idهای یتیم (اگر وجود داشته باشد)
+    orphan_keys = [k for k in ROSTER.keys() if k not in event_ids]
+    if orphan_keys:
+        lines.append("\n⚠️ موارد با رویداد نامعتبر/نامشخص:")
+        for key in orphan_keys:
+            people = ROSTER.get(key, [])
+            lines.append(f"  • ev_id={key} → {len(people)} نفر")
+            for i, r in enumerate(people, start=1):
+                uname = f"@{r['username']}" if r.get("username") else "—"
+                phone = r.get("phone","—")
+                lines.append(f"    {i}. {r['name']} | {uname} | {phone}")
+
     return "\n".join(lines)
 
 def _serialize_state_for_json():
@@ -570,7 +586,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "when": info.get("when","—"),
                             "event_title": info.get("event_title","—"),
                         })
-                        # لاگ کمکی (اختیاری)
+                        # لاگ کمکی
                         print("APPROVED -> added to ROSTER:", ev_id, ROSTER.get(ev_id, []))
                         await _update_roster_message(context)
 
@@ -685,7 +701,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_txt += event_text_admin(ev)
         admin_msg = await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=admin_txt, reply_markup=buttons)
 
-        # Save to pending + schedule auto-approve (60s)
+        # Save to pending + schedule auto-approve (60s) via PTB JobQueue
         job = context.job_queue.run_once(auto_approve_job, when=60, data={"user_chat_id": user_chat_id, "event_id": ev_id})
         PENDING[user_chat_id] = {
             "name": u.get("name","—"),
