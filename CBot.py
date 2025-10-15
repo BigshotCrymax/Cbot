@@ -44,7 +44,7 @@ DEFAULT_EVENTS = [
         "place": "کافه کتاب راوی، مشهد، بلوار احمدآباد، بلوار رضا، بین رضا ۲ و رضا ۴، پلاک ۴۳",
         "maps": "https://nshn.ir/92_b1dFoVJGfNy",
         "price": "سفارش از کافه",
-        "desc": "Our first Chill & Chat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “Let’s get to know each other!” with simple and fun questions like ‘What’s your hobby?’ or ‘Why did you join?’ ☕🙂",
+        "desc": "Our first ChillChat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “Let’s get to know each other!” with simple and fun questions like ‘What’s your hobby?’ or ‘Why did you join?’ ☕🙂",
     }
 ]
 
@@ -68,11 +68,11 @@ except Exception:
 reply_main = ReplyKeyboardMarkup([["شروع مجدد 🔄"]], resize_keyboard=True)
 
 WELCOME = (
-    "سلام! به *Chill & Chat Community* خوش اومدی ☕🇬🇧\n"
+    "سلام! به *ChillChat Community* خوش اومدی ☕🇬🇧\n"
     "اینجا می‌تونی رویدادهای زبان انگلیسی رو ببینی و ثبت‌نام کنی."
 )
 FAQ = (
-    "❔ **سوالات متداول درباره Chill & Chat**\n\n"
+    "❔ **سوالات متداول درباره ChillChat**\n\n"
     "🗣️ **در جلسات چی کار می‌کنیم؟**\n"
     "با بقیه به انگلیسی صحبت می‌کنی، بازی می‌کنیم، موضوع‌های روز رو تمرین می‌کنیم، و کلی آشناهای جدید پیدا می‌کنی!\n\n"
     "☕ **کجا برگزار می‌شن؟**\n"
@@ -556,6 +556,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Chill & Chat bot is running."}
+
 
 
 
