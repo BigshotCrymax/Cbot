@@ -39,13 +39,13 @@ SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
 DEFAULT_EVENTS = [
     {
         "id": "intro01",
-        "title": "Introduction Meeting — Let’s get to know each other!",
+        "title": "Introduction Meeting!",
         "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
         "place": "مشهد، صیاد شیرازی 5 ، پرستو 5  ، شمارنده 31 ",
         "maps": "https://nshn.ir/67_b14yf2JBebv",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "Our first ChillChat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “Let’s get to know each other!” with simple and fun questions like ‘What’s your hobby?’ or ‘Why did you join?’ ☕🙂",
+        "desc": "Our first ChillChat session — a friendly introduction meetup! 🌿 Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: “it will be decided in the group",
     }
 ]
 try:
@@ -135,7 +135,7 @@ def event_text_user(ev):
         parts.append(f"👥 ظرفیت: {status}")
     if ev.get("price"): parts.append(f"💶 {ev['price']}")
     if ev.get("desc"):  parts.append(f"\n📝 {ev['desc']}")
-    parts.append("\n(آدرس دقیق پس از تایید ارسال می‌شود.)")
+    parts.append("\n(آدرس کافه تا 12 ساعت قبل از برگزاری جلسه در ChillChat Official اعلام می شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
@@ -802,4 +802,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running with capacity & auto-approve."}
+
 
