@@ -1,5 +1,7 @@
-python-telegram-bot==20.3
+python-telegram-bot[job-queue]==20.3
 fastapi
 uvicorn
+
+# اختیاری برای لاگ کردن تو Google Sheets (اگه استفاده نمی‌کنی می‌تونی حذف کنی)
 gspread
 oauth2client
