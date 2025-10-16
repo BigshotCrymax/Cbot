@@ -28,7 +28,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))  # گروه ادمین/دیتاسنتر
 DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))  # اگر جداست ست کن
 
-SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Incaseyoulostme")
+SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "ifyoulostme")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")
 GROUP_URL   = os.environ.get("GROUP_URL", "")
 INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")
@@ -999,3 +999,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5)."}
+
