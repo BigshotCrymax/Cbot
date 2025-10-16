@@ -485,6 +485,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.edit_message_text(SOCIAL_TEXT(), parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
+    # === FIX: handle feedback_start so "ارسال نظر و پیشنهاد" کار کند ===
+    if data == "feedback_start":
+        # فعال‌سازی حالت feedback در context.user_data
+        context.user_data["feedback_mode"] = True
+        # پیامی که برای کاربر نشان داده می‌شود تا متنش را ارسال کند
+        return await q.edit_message_text(
+            "📝 نظرت درباره رویدادها، پیشنهاد برای بهبود، یا هر حرف دیگه‌ای رو بنویس و بفرست.\n"
+            "پیامت مستقیم برای تیم ChillChat ارسال میشه 💌",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]])
+        )
+
     if data == "list_events":
         return await render_event_list(update)
 
@@ -875,15 +886,15 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             delayed_auto_approve(context.application, user_chat_id, ev_id, delay=AUTO_APPROVE_DELAY)
         )
         PENDING[user_chat_id] = {
-            "name": u.get("name","—"),
-            "phone": u.get("phone","—"),
-            "level": u.get("level","—"),
-            "note":  u.get("note","—"),
-            "gender": u.get("gender"),
-            "age":    u.get("age"),
+            "name": u.get('name','—'),
+            "phone": u.get('phone','—'),
+            "level": u.get('level','—'),
+            "note":  u.get('note','—'),
+            "gender": u.get('gender'),
+            "age":    u.get('age'),
             "event_id": ev_id,
-            "event_title": ev.get("title") if ev else "—",
-            "when": ev.get("when") if ev else "—",
+            "event_title": ev.get('title') if ev else "—",
+            "when": ev.get('when') if ev else "—",
             "username": update.effective_user.username if update.effective_user else None,
             "admin_msg_id": admin_msg.message_id if admin_msg else None,
             "task": task,
@@ -972,7 +983,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5)."}
-
-
-
 
