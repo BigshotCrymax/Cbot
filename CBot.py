@@ -117,6 +117,36 @@ RULES = (
     "با رعایت این موارد، تجربهٔ بهتری خواهیم داشت ☕❤️"
 )
 
+# معرفی کافه — متن کامل
+CAFE_INTRO_TEXT = (
+    "🏠 **معرفی کافه برای برگزاری ChillChat**\n\n"
+    "اگه کافه‌ی خوبی می‌شناسی که برای دورهمی تمرین زبان انگلیسی مناسبه—چه مشتریش باشی چه دوستش داشته باشی—خوشحال می‌شیم معرفیش کنی 🙌\n"
+    "فقط اطلاعات زیر رو یکجا برامون بفرست تا بررسی کنیم:\n\n"
+    "• **نام کافه + آدرس دقیق**\n"
+    "• **محله/دسترسی عمومی** (نزدیک مترو/ایستگاه اتوبوس؟ پارکینگ داره؟)\n"
+    "• **فضای مناسب گفتگو** (سکوت نسبی، میزهای دو/گروهی، امکان جابه‌جایی صندلی‌ها)\n"
+    "• **ظرفیت پیشنهادی** (حدوداً چند نفر جا می‌شن؟)\n"
+    "• **ساعات خلوت/مناسب** (مثلاً دوشنبه‌ها ۱۸ تا ۲۰)\n"
+    "• **میانگین قیمت سفارش** (نرمال/اقتصادی/بالا)\n"
+    "• **پریز برق/وای‌فای** (نیاز نیست، ولی امتیاز حساب می‌شه)\n"
+    "• **ارتباط با کافه** (اگر شماره/آیدی مدیر یا ادمین داری)\n"
+    "• **چرا این کافه؟** (دو خط درباره تجربه‌ت)\n\n"
+    f"**ارسال معرفی:** لطفاً همین حالا اطلاعات رو برای *@{CAFE_INTRO_USERNAME}* بفرست ✅\n\n"
+    "— — —\n"
+    "### قالب سریع (کپی/پیست)\n"
+    "📍 نام کافه:\n"
+    "📫 آدرس دقیق:\n"
+    "🗺️ محله/دسترسی (مترو/اتوبوس/پارکینگ):\n"
+    "🪑 ظرفیت پیشنهادی:\n"
+    "🤫 سطح سکوت/مناسب گفتگو:\n"
+    "🕒 زمان‌های مناسب/خلوت:\n"
+    "💳 میانگین قیمت سفارش:\n"
+    "📶 امکانات (وای‌فای/پریز/…):\n"
+    "👤 راه ارتباط با کافه (اختیاری):\n"
+    "✨ چرا این کافه برای ChillChat مناسبه؟ (۲–۳ خط):\n\n"
+    "(فرستاده شده توسط: نام شما + @آیدی)"
+)
+
 # پیام‌های ظرفیت
 CAPACITY_CANCEL_MSG = (
     "❌ ثبت‌نام شما به دلیل *تکمیل ظرفیت* لغو شد.\n"
@@ -159,7 +189,7 @@ def event_text_user(ev):
         f"💶 {ev.get('price','') or 'Free'}",
     ]
     if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
-    parts.append("\n(آدرس کافه پیش از رویداد در ChillChat Official اعلام می‌شود.)")
+    parts.append("\n(آدرس دقیق کافه پیش از رویداد در ChillChat Official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
@@ -297,6 +327,12 @@ def gender_inline():
         [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")],
     ])
 
+def age_inline():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➖ ترجیح می‌دهم نگویم", callback_data="age_na")],
+        [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")],
+    ])
+
 def event_inline_register(ev_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 ثبت‌نام در همین رویداد", callback_data=f"register_{ev_id}")],
@@ -346,22 +382,6 @@ async def render_name(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
     else:
         await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=back_inline())
 
-async def render_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    push_step(context, "phone")
-    contact_btn = ReplyKeyboardMarkup(
-        [[KeyboardButton("ارسال شماره تماس 📱", request_contact=True)]],
-        resize_keyboard=True, one_time_keyboard=True,
-    )
-    await update.effective_chat.send_message("شماره تلفنت رو وارد کن یا دکمه زیر رو بزن:", reply_markup=contact_btn)
-    await update.effective_chat.send_message("یا می‌تونی به مرحله قبل برگردی:", reply_markup=back_inline())
-
-async def render_level(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
-    push_step(context, "level")
-    if update.callback_query and edit:
-        await update.callback_query.edit_message_text("سطح زبانت چیه؟ یکی رو انتخاب کن:", reply_markup=level_inline())
-    else:
-        await update.effective_chat.send_message("سطح زبانت چیه؟ یکی رو انتخاب کن:", reply_markup=level_inline())
-
 async def render_gender(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "gender")
     txt = "جنسیتت رو انتخاب کن:"
@@ -372,11 +392,27 @@ async def render_gender(update: Update, context: ContextTypes.DEFAULT_TYPE, edit
 
 async def render_age(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "age")
-    txt = "سن‌ت رو به عدد بفرست (مثلاً 24). اگر نمی‌خوای بگی، فقط یک خط تیره `-` بفرست."
+    txt = "سن‌ت رو به *عدد* بفرست (مثلاً 24). یا دکمهٔ «ترجیح می‌دهم نگویم» رو بزن."
     if update.callback_query and edit:
-        await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back_inline())
+        await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=age_inline())
     else:
-        await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=back_inline())
+        await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=age_inline())
+
+async def render_level(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    push_step(context, "level")
+    if update.callback_query and edit:
+        await update.callback_query.edit_message_text("سطح زبانت چیه؟ یکی رو انتخاب کن:", reply_markup=level_inline())
+    else:
+        await update.effective_chat.send_message("سطح زبانت چیه؟ یکی رو انتخاب کن:", reply_markup=level_inline())
+
+async def render_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    push_step(context, "phone")
+    contact_btn = ReplyKeyboardMarkup(
+        [[KeyboardButton("ارسال شماره تماس 📱", request_contact=True)]],
+        resize_keyboard=True, one_time_keyboard=True,
+    )
+    await update.effective_chat.send_message("شماره تلفنت رو وارد کن یا دکمه زیر رو بزن:", reply_markup=contact_btn)
+    await update.effective_chat.send_message("یا می‌تونی به مرحله قبل برگردی:", reply_markup=back_inline())
 
 async def render_note(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "note")
@@ -401,14 +437,14 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await render_rules(update, context)
     elif prev == "name":
         await render_name(update, context, edit=True)
-    elif prev == "phone":
-        await render_phone(update, context)
-    elif prev == "level":
-        await render_level(update, context, edit=True)
     elif prev == "gender":
         await render_gender(update, context, edit=True)
     elif prev == "age":
         await render_age(update, context, edit=True)
+    elif prev == "level":
+        await render_level(update, context, edit=True)
+    elif prev == "phone":
+        await render_phone(update, context)
     elif prev == "note":
         await render_note(update, context, edit=True)
     else:
@@ -447,6 +483,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("gender_"):
         return await handle_gender(update, context)
 
+    if data == "age_na":
+        # سن = اعلام نمی‌کنم
+        context.user_data["age"] = None
+        await q.answer()
+        return await render_level(update, context, edit=True)
+
     await q.answer()
 
     if data == "back_home":
@@ -463,11 +505,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "cafe_intro":
-        txt = (
-            "🏠 **معرفی کافه برای برگزاری ChillChat**\n\n"
-            f"اگر صاحب/مدیر کافه هستی و می‌خوای میزبان ChillChat باشی، لطفاً آدرس دقیق و مشخصات کافه‌ت رو به @{CAFE_INTRO_USERNAME} بفرست 🙌"
-        )
-        return await q.edit_message_text(txt, parse_mode="Markdown",
+        return await q.edit_message_text(CAFE_INTRO_TEXT, parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "socials":
@@ -648,31 +686,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["feedback_mode"] = False
         return
 
-    # Registration flow
-    if step == "pick_event":
-        return
+    # Registration flow (ترتیب جدید)
     if step == "name":
         if 2 <= len(text) <= 60:
             context.user_data["name"] = text
-            return await render_phone(update, context)
+            return await render_gender(update, context, edit=False)
         else:
             return await update.message.reply_text("لطفاً نام معتبر وارد کن (۲ تا ۶۰ کاراکتر).")
-    if step == "phone":
-        context.user_data["phone"] = text
-        await update.message.reply_text("دریافت شد ✅", reply_markup=reply_main)
-        return await render_level(update, context, edit=False)
+
     if step == "age":
-        # سن: عدد 1..120 یا "-"
+        # سن: عدد 1..120 یا با دکمه «ترجیح می‌دهم نگویم» در کالبک
         if text == "-" or text == "—":
             context.user_data["age"] = None
         else:
             if not re.fullmatch(r"\d{1,3}", text):
-                return await update.message.reply_text("لطفاً سن را به عدد وارد کن (مثلاً 23) یا '-' برای عدم اعلام.")
+                return await update.message.reply_text("لطفاً سن را به عدد وارد کن (مثلاً 23) یا از دکمه «ترجیح می‌دهم نگویم» استفاده کن.")
             age_int = int(text)
             if not (1 <= age_int <= 120):
-                return await update.message.reply_text("سن نامعتبر است. یک عدد بین 1 تا 120 بفرست یا '-' برای عدم اعلام.")
+                return await update.message.reply_text("سن نامعتبر است. یک عدد بین 1 تا 120 بفرست یا روی «ترجیح می‌دهم نگویم» بزن.")
             context.user_data["age"] = age_int
+        return await render_level(update, context, edit=False)
+
+    if step == "level":
+        # این مرحله با کلیدهای inline کنترل می‌شود؛ اگر کسی متن فرستاد، نادیده می‌گیریم و دوباره منو می‌دهیم
+        return await render_level(update, context, edit=False)
+
+    if step == "phone":
+        context.user_data["phone"] = text
+        await update.message.reply_text("شماره دریافت شد ✅", reply_markup=reply_main)
         return await render_note(update, context, edit=False)
+
     if step == "note":
         context.user_data["note"] = text
         return await finalize_and_send(update, context)
@@ -684,7 +727,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_step(context) == "phone":
         context.user_data["phone"] = update.message.contact.phone_number
         await update.message.reply_text("شماره دریافت شد ✅", reply_markup=reply_main)
-        await render_level(update, context, edit=False)
+        await render_note(update, context, edit=False)
 
 async def handle_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -692,7 +735,8 @@ async def handle_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     lvl_map = {"lvl_A": "Beginner (A1–A2)", "lvl_B": "Intermediate (B1–B2)", "lvl_C": "Advanced (C1+)"}
     context.user_data["level"] = lvl_map.get(data, "Unknown")
-    await render_gender(update, context, edit=True)
+    # بعد از سطح زبان → شماره تماس
+    await render_phone(update, context)
 
 async def handle_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -710,6 +754,7 @@ async def handle_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_flow(context)
         return
 
+    # بعد از جنسیت → سن
     await render_age(update, context, edit=True)
 
 # =========================
@@ -819,10 +864,10 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = (
         "✅ درخواست ثبت‌نامت ثبت شد و برای ادمین ارسال می‌شود.\n\n"
         f"👤 نام: {u.get('name','—')}\n"
-        f"📱 تماس: {u.get('phone','—')}\n"
-        f"🗣️ سطح: {u.get('level','—')}\n"
         f"⚧ جنسیت: {({'male':'مرد','female':'زن','na':'ترجیح می‌دهم نگویم'}).get(u.get('gender'),'—')}\n"
         f"🎂 سن: {u.get('age','—') if u.get('age') is not None else '—'}\n"
+        f"🗣️ سطح: {u.get('level','—')}\n"
+        f"📱 تماس: {u.get('phone','—')}\n"
         f"📝 توضیحات: {u.get('note','—')}\n"
     )
     if ev:
@@ -842,10 +887,10 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_txt = (
             "🔔 ثبت‌نام جدید ChillChat\n\n"
             f"👤 نام: {u.get('name','—')}\n"
-            f"📱 تماس: {u.get('phone','—')}\n"
-            f"🗣️ سطح: {u.get('level','—')}\n"
             f"⚧ جنسیت: {({'male':'مرد','female':'زن','na':'ترجیح می‌دهم نگویم'}).get(u.get('gender'),'—')}\n"
             f"🎂 سن: {u.get('age','—') if u.get('age') is not None else '—'}\n"
+            f"🗣️ سطح: {u.get('level','—')}\n"
+            f"📱 تماس: {u.get('phone','—')}\n"
             f"📝 توضیحات: {u.get('note','—')}\n\n"
         )
         if ev:
