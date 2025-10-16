@@ -49,7 +49,7 @@ DEFAULT_EVENTS = [
         "id": "intro01",
         "title": "Introduction Meeting!",
         "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
-        "place": "کافه درنا : مشهد، صیاد شیرازی 5 ، پرستو 5 ، شمارنده 31",
+        "place": "کافه درنا",
         "maps": "https://nshn.ir/67_b14yf2JBebv",
         "price": "سفارش از کافه",
         "capacity": 12,
@@ -815,4 +815,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity)."}
+
 
