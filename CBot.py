@@ -1,6 +1,6 @@
 # CBot.py — ChillChat Community Bot (Webhook + FastAPI/Uvicorn)
 # python-telegram-bot==20.3, fastapi, uvicorn
-# سازگار با Python 3.13 (بدون JobQueue؛ استفاده از asyncio)
+# سازگار با Python 3.13 — بدون JobQueue؛ از asyncio استفاده می‌کند
 
 import os
 import json
@@ -25,18 +25,23 @@ from telegram.ext import (
 # =========================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-
-GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))                 # گروه ادمین
-DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))  # گروه دیتاسنتر
+GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))  # گروه ادمین/دیتاسنتر
+DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))  # اگر جداست ست کن
 
 SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Incaseyoulostme")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")
 GROUP_URL   = os.environ.get("GROUP_URL", "")
 INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")
 
-# (اختیاری) Google Sheets
+# (Optional) Google Sheets
 GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")
 SHEET_NAME = os.environ.get("SHEET_NAME", "EnglishClubRegistrations")
+
+# تایید خودکار پس از 12 ساعت
+AUTO_APPROVE_DELAY = 12 * 60 * 60  # 43200 ثانیه
+
+# نمایش JSON در پیام پین‌شده؟ (پیش‌فرض خاموش)
+SHOW_JSON_IN_PINNED = os.environ.get("SHOW_JSON_IN_PINNED", "0") == "1"
 
 # --- DEFAULT EVENTS (override via EVENTS_JSON) ---
 DEFAULT_EVENTS = [
@@ -66,11 +71,13 @@ except Exception:
 # =========================
 #     IN-MEMORY STORAGE
 # =========================
-# PENDING: { user_chat_id: {..., "task": asyncio.Task } }
-PENDING = {}
-# ROSTER: { event_id: [ {name, username, phone, when, event_title}, ... ] }
-ROSTER = {}
-ROSTER_MESSAGE_ID = None  # pinned message id در دیتاسنتر
+# PENDING: درخواست‌های در انتظار تایید
+# هر ورودی: {name, phone, level, note, event_id, event_title, when, username, admin_msg_id, task}
+PENDING = {}  # key: user_chat_id -> dict
+# ROSTER: افراد تاییدشده به تفکیک رویداد
+# هر آیتم: {name, username, phone, when, event_title}
+ROSTER = {}   # key: event_id -> list[dict]
+ROSTER_MESSAGE_ID = None  # پیام پین‌شده دیتاسنتر
 
 # =========================
 #          TEXTS
@@ -106,6 +113,7 @@ RULES = (
     "با رعایت این چند مورد ساده، همه‌مون تجربه‌ای عالی خواهیم داشت ☕❤️"
 )
 
+# پیام‌های ظرفیت
 CAPACITY_CANCEL_MSG = (
     "❌ ثبت‌نام شما به دلیل *تکمیل ظرفیت* لغو شد.\n"
     "برای شرکت در برنامه‌های بعدی، از «🎉 رویدادهای پیش‌رو» رویداد دیگری را انتخاب کنید."
@@ -135,17 +143,17 @@ def remaining_capacity(ev: dict) -> int:
     return max(0, cap - approved_count(ev["id"])) if cap else 999999
 
 def event_text_user(ev):
-    parts = [f"**{ev.get('title','')}**", f"🕒 {ev.get('when','')}"]
-    if ev.get("capacity"):
-        left = remaining_capacity(ev)
-        status = f"{ev['capacity']-left}/{ev['capacity']}" if left else f"{ev['capacity']}/{ev['capacity']} (تکمیل)"
-        parts.append(f"👥 ظرفیت: {status}")
-    if ev.get("price"): parts.append(f"💶 {ev['price']}")
-    if ev.get("desc"):  parts.append(f"\n📝 {ev['desc']}")
+    # ❗️نمایش به کاربر — بدون ظرفیت
+    parts = [f"**{ev.get('title','')}**",
+             f"🕒 {ev.get('when','')}",
+             f"📍 {ev.get('place','—')}",
+             f"💶 {ev.get('price','') or 'Free'}"]
+    if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
     parts.append("\n(آدرس کافه تا 12 ساعت قبل از برگزاری جلسه در ChillChat Official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
+    # نمایش برای ادمین — با ظرفیت
     cap_line = ""
     if ev.get("capacity"):
         cap_line = f"👥 ظرفیت: {approved_count(ev['id'])}/{ev['capacity']}\n"
@@ -179,21 +187,15 @@ def clear_flow(context):
         context.user_data.pop(k, None)
 
 # ====== Datacenter pinned message as lightweight DB ======
-JSON_START = "```json"
-JSON_END = "```"
-
 def _build_human_roster_text():
+    # بسیار خلاصه: فقط نام | آیدی | شماره
     if not ROSTER:
         return "📋 لیست تاییدشده‌ها (DataCenter)\n— هنوز کسی تایید نشده."
-
     lines = ["📋 لیست تاییدشده‌ها (DataCenter)"]
-    event_ids = {e["id"] for e in EVENTS}
-
     for ev in EVENTS:
         ev_id = ev["id"]
         people = ROSTER.get(ev_id, [])
-        cap_txt = f" | ظرفیت: {len(people)}/{ev.get('capacity', '∞')}" if ev.get("capacity") else ""
-        lines.append(f"\n🗓 {ev['title']} — {ev['when']}{cap_txt}")
+        lines.append(f"\n🗓 {ev['title']} — {ev['when']} | تاییدشده‌ها: {len(people)}")
         if not people:
             lines.append("  — هنوز تاییدی نداریم")
         else:
@@ -201,96 +203,45 @@ def _build_human_roster_text():
                 uname = f"@{r['username']}" if r.get("username") else "—"
                 phone = r.get("phone","—")
                 lines.append(f"  {i}. {r['name']} | {uname} | {phone}")
-
-    # ev_idهای یتیم
-    orphan_keys = [k for k in ROSTER.keys() if k not in event_ids]
-    if orphan_keys:
-        lines.append("\n⚠️ موارد با رویداد نامعتبر/نامشخص:")
-        for key in orphan_keys:
-            people = ROSTER.get(key, [])
-            lines.append(f"  • ev_id={key} → {len(people)} نفر")
-            for i, r in enumerate(people, start=1):
-                uname = f"@{r['username']}" if r.get("username") else "—"
-                phone = r.get("phone","—")
-                lines.append(f"    {i}. {r['name']} | {uname} | {phone}")
-
     return "\n".join(lines)
-
-def _serialize_state_for_json():
-    return {
-        "events": [{"id": e["id"], "capacity": e.get("capacity"), "title": e.get("title"), "when": e.get("when")} for e in EVENTS],
-        "roster": ROSTER,
-    }
-
-def _embed_text_with_json(human_text: str, data: dict) -> str:
-    return f"{human_text}\n\n---\n{JSON_START}\n{json.dumps(data, ensure_ascii=False)}\n{JSON_END}"
-
-def _extract_json_from_text(text: str):
-    if not text: return None
-    m = re.search(r"```json\s*(\{.*\})\s*```", text, re.DOTALL)
-    if not m: return None
-    try:
-        return json.loads(m.group(1))
-    except Exception:
-        return None
-
-async def load_state_from_pinned(application):
-    global ROSTER_MESSAGE_ID, ROSTER
-    if not DATACENTER_CHAT_ID:
-        return
-    try:
-        chat = await application.bot.get_chat(DATACENTER_CHAT_ID)
-        pin = getattr(chat, "pinned_message", None)
-        if not pin:
-            return
-        ROSTER_MESSAGE_ID = pin.message_id
-        data = _extract_json_from_text(getattr(pin, "text", "") or getattr(pin, "caption", ""))
-        if data and isinstance(data.get("roster"), dict):
-            ROSTER = data["roster"]
-    except Exception as e:
-        print("load_state_from_pinned error:", e)
 
 async def save_state_to_pinned(application):
     """
-    متن خلاصه + JSON را در دیتاسنتر به‌روزرسانی می‌کند.
-    اگر ادیت نشد، پیام جدید می‌سازد، قبلی را آن‌پین می‌کند و جدید را پین می‌کند.
+    متن خلاصه را در پیام پین‌شده دیتاسنتر آپدیت می‌کند.
+    اگر SHOW_JSON_IN_PINNED=1 باشد، JSON هم ضمیمه می‌شود.
     """
     global ROSTER_MESSAGE_ID
     if not DATACENTER_CHAT_ID:
         return
 
     human = _build_human_roster_text()
-    payload = _serialize_state_for_json()
-    full_text = _embed_text_with_json(human, payload)
+    if SHOW_JSON_IN_PINNED:
+        human += "\n\n---\n```json\n" + json.dumps({"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS], "roster":ROSTER}, ensure_ascii=False) + "\n```"
 
-    # تلاش برای ادیت پیام فعلی
-    if ROSTER_MESSAGE_ID:
-        try:
+    try:
+        if ROSTER_MESSAGE_ID:
             await application.bot.edit_message_text(
                 chat_id=DATACENTER_CHAT_ID,
                 message_id=ROSTER_MESSAGE_ID,
-                text=full_text,
+                text=human,
             )
             return
-        except Exception as e:
-            print("edit pinned roster failed -> will recreate:", e)
-
-    # ساخت پیام جدید + پین
-    try:
-        new_msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=full_text)
-        new_id = new_msg.message_id
-        try:
-            if ROSTER_MESSAGE_ID:
-                await application.bot.unpin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID)
-        except Exception as e:
-            print("unpin old roster failed:", e)
-        try:
-            await application.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=new_id, disable_notification=True)
-        except Exception as e:
-            print("pin new roster failed:", e)
-        ROSTER_MESSAGE_ID = new_id
     except Exception as e:
-        print("send new roster failed:", e)
+        print("edit pinned roster failed, will recreate:", e)
+
+    try:
+        msg = await application.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=human)
+        ROSTER_MESSAGE_ID = msg.message_id
+        try:
+            await application.bot.pin_chat_message(
+                chat_id=DATACENTER_CHAT_ID,
+                message_id=ROSTER_MESSAGE_ID,
+                disable_notification=True
+            )
+        except Exception as e:
+            print("pin roster message failed:", e)
+    except Exception as e:
+        print("send roster message failed:", e)
 
 async def _update_roster_message(context: ContextTypes.DEFAULT_TYPE):
     await save_state_to_pinned(context.application)
@@ -349,10 +300,8 @@ async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
 async def render_event_list(update: Update):
     rows = []
     for e in EVENTS:
-        cap_txt = ""
-        if e.get("capacity"):
-            cap_txt = f" — ظرفیت: {approved_count(e['id'])}/{e['capacity']}"
-        label = f"{e['title']} | {e['when']}{cap_txt}"
+        # ❗️بدون نمایش ظرفیت
+        label = f"{e['title']} | {e['when']}"
         rows.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
     rows.append([InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")])
     await update.callback_query.edit_message_text("رویدادهای پیش‌رو:", reply_markup=InlineKeyboardMarkup(rows))
@@ -518,7 +467,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             approver = q.from_user
             approved_by = approver.full_name
 
-            # ظرفیت روی تایید
+            # Capacity check on approve
             if action == "approve" and ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
                 await q.answer("ظرفیت تکمیل است؛ امکان تایید نیست.", show_alert=True)
                 base_text = q.message.text or ""
@@ -529,7 +478,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
 
-            # اطلاع به کاربر
+            # Inform user
             if action == "approve":
                 detail = (
                     "🎉 ثبت‌نامت تایید شد!\n\n"
@@ -547,7 +496,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
 
-            # حذف دکمه‌ها + مهر تایید/رد
+            # Remove buttons + stamp approver
             base_text = q.message.text or ""
             stamp = "✅ توسط {0} تایید شد.".format(approved_by) if action == "approve" else "❌ توسط {0} رد شد.".format(approved_by)
             try:
@@ -558,7 +507,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
 
-            # لغو تسک auto-approve اگر وجود دارد
+            # cancel auto-approve task if exists
             info = PENDING.get(user_chat_id)
             if info and info.get("task"):
                 try:
@@ -566,7 +515,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-            # انتقال به ROSTER
+            # On approve: move to roster
             if action == "approve":
                 info = PENDING.pop(user_chat_id, None)
                 if info:
@@ -580,7 +529,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "when": info.get("when","—"),
                             "event_title": info.get("event_title","—"),
                         })
-                        print("APPROVED -> added to ROSTER:", ev_id, ROSTER.get(ev_id, []))
                         await _update_roster_message(context)
 
             await q.answer("انجام شد.")
@@ -593,11 +541,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     step = current_step(context)
 
-    # ری‌استارت منعطف (با یا بدون ایموجی)
+    # ری‌استارت منعطف
     if re.fullmatch(r"شروع\s*مجدد(?:\s*🔄)?", text):
         return await render_home(update, context)
 
-    # حالت فیدبک
+    # Feedback mode
     if context.user_data.get("feedback_mode"):
         try:
             if GROUP_CHAT_ID:
@@ -638,7 +586,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["note"] = text
         return await finalize_and_send(update, context)
 
-    # فالبک: هر متن ناشناس → منوی اصلی
+    # فالبک
     return await render_home(update, context)
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -656,9 +604,9 @@ async def handle_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_note(update, context, edit=True)
 
 # =========================
-#  AUTO-APPROVE via asyncio
+#  AUTO-APPROVE via asyncio (12h)
 # =========================
-async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 60):
+async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = AUTO_APPROVE_DELAY):
     try:
         await asyncio.sleep(delay)
     except asyncio.CancelledError:
@@ -693,7 +641,6 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
         "when": info.get("when","—"),
         "event_title": info.get("event_title","—"),
     })
-    print("AUTO-APPROVED(asyncio) -> added to ROSTER:", ev_id, ROSTER.get(ev_id, []))
     await save_state_to_pinned(app)
 
     # notify user
@@ -732,7 +679,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ev_id = u.get("selected_event_id") or (EVENTS[0]["id"] if EVENTS else None)
     ev = get_event(ev_id)
 
-    # capacity check
+    # Capacity check just before sending to admin
     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
         await update.effective_chat.send_message(CAPACITY_CANCEL_MSG, reply_markup=reply_main)
         clear_flow(context)
@@ -770,9 +717,9 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_txt += event_text_admin(ev)
         admin_msg = await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=admin_txt, reply_markup=buttons)
 
-        # Save to pending + schedule auto-approve (60s) via asyncio
+        # Save to pending + schedule auto-approve (12h) via asyncio
         task = context.application.create_task(
-            delayed_auto_approve(context.application, user_chat_id, ev_id, delay=60)
+            delayed_auto_approve(context.application, user_chat_id, ev_id, delay=AUTO_APPROVE_DELAY)
         )
         PENDING[user_chat_id] = {
             "name": u.get("name","—"),
@@ -870,3 +817,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (asyncio auto-approve, pinned roster)."}
+
