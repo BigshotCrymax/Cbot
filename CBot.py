@@ -787,7 +787,7 @@ application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^شروع\s*مجدد(?:\s*🔄)?$"), shortcut_restart))
 
 application.add_handler(CallbackQueryHandler(handle_level, pattern=r"^lvl_"))
-application.add_handler(CallbackQueryHandler(handle_callback))  # بقیه دکمه‌ها + تایید ادمین
+application.add_handler(CallbackQueryHandler(handle_callback))
 application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(CommandHandler("testpin", cmd_testpin))
@@ -796,8 +796,6 @@ application.add_handler(CommandHandler("roster",  cmd_roster))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await application.initialize()
-    # بازیابی وضعیت از پیام پین‌شده دیتاسنتر (برای پایداری)
-    await load_state_from_pinned(application)
     if WEBHOOK_URL:
         await application.bot.set_webhook(url=WEBHOOK_URL)
     await application.start()
@@ -816,5 +814,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "ChillChat bot is running (asyncio auto-approve, pinned roster)."}
-
+    return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity)."}
