@@ -32,6 +32,7 @@ SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Incaseyoulostme")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")
 GROUP_URL   = os.environ.get("GROUP_URL", "")
 INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")
+CAFE_INTRO_USERNAME = os.environ.get("CAFE_INTRO_USERNAME", "ifyoulostme")  # برای «معرفی کافه»
 
 # (Optional) Google Sheets
 GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")
@@ -42,6 +43,9 @@ AUTO_APPROVE_DELAY = 12 * 60 * 60  # 43200 ثانیه
 
 # نمایش JSON در پیام پین‌شده؟ (پیش‌فرض خاموش)
 SHOW_JSON_IN_PINNED = os.environ.get("SHOW_JSON_IN_PINNED", "0") == "1"
+
+# سقف آقایان در هر رویداد
+MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 
 # --- DEFAULT EVENTS (override via EVENTS_JSON) ---
 DEFAULT_EVENTS = [
@@ -72,10 +76,10 @@ except Exception:
 #     IN-MEMORY STORAGE
 # =========================
 # PENDING: درخواست‌های در انتظار تایید
-# هر ورودی: {name, phone, level, note, event_id, event_title, when, username, admin_msg_id, task}
+# هر ورودی: {name, phone, level, note, gender, age, event_id, event_title, when, username, admin_msg_id, task}
 PENDING = {}  # key: user_chat_id -> dict
 # ROSTER: افراد تاییدشده به تفکیک رویداد
-# هر آیتم: {name, username, phone, when, event_title}
+# هر آیتم: {name, username, phone, gender, age, when, event_title}
 ROSTER = {}   # key: event_id -> list[dict]
 ROSTER_MESSAGE_ID = None  # پیام پین‌شده دیتاسنتر
 
@@ -97,20 +101,20 @@ FAQ = (
     "جلسات در کافه برگزار می‌شن و برای همه سطوح بازن.\n\n"
     "💶 **هزینه شرکت چقدره؟**\n"
     "رویدادها معمولاً رایگان هستن؛ فقط لازمه یک سفارش از کافه داشته باشی.\n\n"
-    "📸 **آیا از جلسات عکس گرفته میشه؟**\n"
-    "گاهی بله! فقط با رضایت شرکت‌کننده‌ها برای شبکه‌های اجتماعی.\n\n"
-    "📝 **چطور ثبت‌نام کنم؟**\n"
-    "ثبت‌نامت ابتدا برای ادمین ارسال میشه و بعد از تایید، اسم شما در لیست شرکت کنندگان قرار میگیره."
+    "📸 **عکس‌برداری**\n"
+    "گاهی بله—با رضایت شرکت‌کننده‌ها برای شبکه‌های اجتماعی.\n\n"
+    "📝 **ثبت‌نام**\n"
+    "درخواستت برای ادمین ارسال میشه و بعد از تایید، اسمت در لیست شرکت‌کنندگان قرار می‌گیره."
 )
 
 RULES = (
     "⚠️ **قوانین ChillChat**\n\n"
-    "💬 **با احترام رفتار کن** — با همه دوستانه برخورد کن و فضایی مثبت بساز.\n"
-    "🗣️ **تا جای ممکن انگلیسی صحبت کن** — هدفمون تمرین مکالمه در محیطی راحت و بدون استرسه.\n"
-    "⏰ **به موقع بیا** — شروع جلسه‌ها معمولاً راس ساعت تعیین‌شده است.\n"
-    "📱 **گوشی‌تو بی‌صدا کن** تا تمرکز بقیه حفظ بشه.\n"
-    "🙏 **اگه نمی‌تونی شرکت کنی، زودتر خبر بده** تا جات به نفر دیگه داده بشه.\n\n"
-    "با رعایت این چند مورد ساده، همه‌مون تجربه‌ای عالی خواهیم داشت ☕❤️"
+    "💬 با احترام رفتار کن.\n"
+    "🗣️ تا جای ممکن انگلیسی صحبت کن (هدفمون تمرینه).\n"
+    "⏰ به‌موقع بیا؛ شروع دقیق.\n"
+    "📱 گوشی بی‌صدا.\n"
+    "🙏 اگر نمی‌تونی شرکت کنی، زودتر اطلاع بده.\n\n"
+    "با رعایت این موارد، تجربهٔ بهتری خواهیم داشت ☕❤️"
 )
 
 # پیام‌های ظرفیت
@@ -119,6 +123,7 @@ CAPACITY_CANCEL_MSG = (
     "برای شرکت در برنامه‌های بعدی، از «🎉 رویدادهای پیش‌رو» رویداد دیگری را انتخاب کنید."
 )
 CAPACITY_FULL_PREVENT_MSG = "❌ ظرفیت این رویداد تکمیل است. لطفاً رویداد دیگری را انتخاب کن."
+MALE_CAPACITY_FULL_MSG = "❌ سقف ظرفیت شرکت‌کنندگان *آقا* برای این رویداد تکمیل شده است."
 
 def SOCIAL_TEXT():
     return (
@@ -142,18 +147,23 @@ def remaining_capacity(ev: dict) -> int:
     cap = int(ev.get("capacity", 0) or 0)
     return max(0, cap - approved_count(ev["id"])) if cap else 999999
 
+def male_count(ev_id: str) -> int:
+    return sum(1 for r in ROSTER.get(ev_id, []) if r.get("gender") == "male")
+
 def event_text_user(ev):
-    # ❗️نمایش به کاربر — بدون ظرفیت
-    parts = [f"**{ev.get('title','')}**",
-             f"🕒 {ev.get('when','')}",
-             f"📍 {ev.get('place','—')}",
-             f"💶 {ev.get('price','') or 'Free'}"]
+    # بدون نمایش ظرفیت
+    parts = [
+        f"**{ev.get('title','')}**",
+        f"🕒 {ev.get('when','')}",
+        f"📍 {ev.get('place','—')}",
+        f"💶 {ev.get('price','') or 'Free'}",
+    ]
     if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
-    parts.append("\n(آدرس کافه تا 12 ساعت قبل از برگزاری جلسه در ChillChat Official اعلام می‌شود.)")
+    parts.append("\n(آدرس کافه پیش از رویداد در ChillChat Official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
-    # نمایش برای ادمین — با ظرفیت
+    # برای ادمین — با ظرفیت
     cap_line = ""
     if ev.get("capacity"):
         cap_line = f"👥 ظرفیت: {approved_count(ev['id'])}/{ev['capacity']}\n"
@@ -183,19 +193,18 @@ def current_step(context):
     return nav[-1] if nav else None
 
 def clear_flow(context):
-    for k in ["nav","origin","selected_event_id","name","phone","level","note","feedback_mode"]:
+    for k in ["nav","origin","selected_event_id","name","phone","level","gender","age","note","feedback_mode"]:
         context.user_data.pop(k, None)
 
-# ====== Datacenter pinned message as lightweight DB ======
+# ====== Datacenter pinned message (human text; JSON optional) ======
 def _build_human_roster_text():
-    # بسیار خلاصه: فقط نام | آیدی | شماره
     if not ROSTER:
         return "📋 لیست تاییدشده‌ها (DataCenter)\n— هنوز کسی تایید نشده."
     lines = ["📋 لیست تاییدشده‌ها (DataCenter)"]
     for ev in EVENTS:
         ev_id = ev["id"]
         people = ROSTER.get(ev_id, [])
-        lines.append(f"\n🗓 {ev['title']} — {ev['when']} | تاییدشده‌ها: {len(people)}")
+        lines.append(f"\n🗓 {ev['title']} — {ev['when']} | تاییدشده‌ها: {len(people)} (آقایان: {male_count(ev_id)})")
         if not people:
             lines.append("  — هنوز تاییدی نداریم")
         else:
@@ -216,7 +225,9 @@ async def save_state_to_pinned(application):
 
     human = _build_human_roster_text()
     if SHOW_JSON_IN_PINNED:
-        human += "\n\n---\n```json\n" + json.dumps({"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS], "roster":ROSTER}, ensure_ascii=False) + "\n```"
+        human += "\n\n---\n```json\n" + json.dumps(
+            {"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS],
+             "roster":ROSTER}, ensure_ascii=False) + "\n```"
 
     try:
         if ROSTER_MESSAGE_ID:
@@ -253,6 +264,7 @@ def build_main_menu():
     buttons = [
         [InlineKeyboardButton("🎉 رویدادهای پیش‌رو", callback_data="list_events")],
         [InlineKeyboardButton("📝 ثبت‌نام سریع", callback_data="register")],
+        [InlineKeyboardButton("🏠 معرفی کافه", callback_data="cafe_intro")],
         [InlineKeyboardButton("🌐 شبکه‌های اجتماعی", callback_data="socials")],
         [InlineKeyboardButton("❔ سوالات متداول", callback_data="faq")],
         [InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")],
@@ -274,6 +286,14 @@ def level_inline():
         [InlineKeyboardButton("Beginner (A1–A2)", callback_data="lvl_A")],
         [InlineKeyboardButton("Intermediate (B1–B2)", callback_data="lvl_B")],
         [InlineKeyboardButton("Advanced (C1+)", callback_data="lvl_C")],
+        [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")],
+    ])
+
+def gender_inline():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👨 مرد", callback_data="gender_m"),
+         InlineKeyboardButton("👩 زن",  callback_data="gender_f")],
+        [InlineKeyboardButton("🤫 ترجیح می‌دهم نگویم", callback_data="gender_n")],
         [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")],
     ])
 
@@ -300,7 +320,7 @@ async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
 async def render_event_list(update: Update):
     rows = []
     for e in EVENTS:
-        # ❗️بدون نمایش ظرفیت
+        # بدون نمایش ظرفیت
         label = f"{e['title']} | {e['when']}"
         rows.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
     rows.append([InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")])
@@ -342,6 +362,22 @@ async def render_level(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=
     else:
         await update.effective_chat.send_message("سطح زبانت چیه؟ یکی رو انتخاب کن:", reply_markup=level_inline())
 
+async def render_gender(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    push_step(context, "gender")
+    txt = "جنسیتت رو انتخاب کن:"
+    if update.callback_query and edit:
+        await update.callback_query.edit_message_text(txt, reply_markup=gender_inline())
+    else:
+        await update.effective_chat.send_message(txt, reply_markup=gender_inline())
+
+async def render_age(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    push_step(context, "age")
+    txt = "سن‌ت رو به عدد بفرست (مثلاً 24). اگر نمی‌خوای بگی، فقط یک خط تیره `-` بفرست."
+    if update.callback_query and edit:
+        await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back_inline())
+    else:
+        await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=back_inline())
+
 async def render_note(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "note")
     txt = "یادداشت/نیاز خاص داری؟ (اختیاری) اینجا بنویس و بفرست. اگر چیزی نداری، فقط یک خط تیره `-` بفرست."
@@ -369,6 +405,10 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await render_phone(update, context)
     elif prev == "level":
         await render_level(update, context, edit=True)
+    elif prev == "gender":
+        await render_gender(update, context, edit=True)
+    elif prev == "age":
+        await render_age(update, context, edit=True)
     elif prev == "note":
         await render_note(update, context, edit=True)
     else:
@@ -404,6 +444,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lvl_"):
         return await handle_level(update, context)
 
+    if data.startswith("gender_"):
+        return await handle_gender(update, context)
+
     await q.answer()
 
     if data == "back_home":
@@ -419,6 +462,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = f"🆘 برای پشتیبانی به آیدی زیر پیام بده:\n@{SUPPORT_USERNAME}"
         return await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
+    if data == "cafe_intro":
+        txt = (
+            "🏠 **معرفی کافه برای برگزاری ChillChat**\n\n"
+            f"اگر صاحب/مدیر کافه هستی و می‌خوای میزبان ChillChat باشی، لطفاً آدرس دقیق و مشخصات کافه‌ت رو به @{CAFE_INTRO_USERNAME} بفرست 🙌"
+        )
+        return await q.edit_message_text(txt, parse_mode="Markdown",
+                                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
+
     if data == "socials":
         return await q.edit_message_text(SOCIAL_TEXT(), parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
@@ -433,7 +484,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await render_event_detail(update, ev)
 
     if data == "register" or data.startswith("register_"):
-        # Capacity check before flow
+        # انتخاب رویداد
         target_ev = None
         if data.startswith("register_"):
             ev_id = data.split("_",1)[1]
@@ -448,6 +499,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_ev and context.user_data.get("selected_event_id"):
             target_ev = get_event(context.user_data["selected_event_id"])
 
+        # ظرفیت کلی رویداد
         if target_ev and target_ev.get("capacity") and remaining_capacity(target_ev) <= 0:
             return await q.edit_message_text(
                 CAPACITY_FULL_PREVENT_MSG,
@@ -467,7 +519,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             approver = q.from_user
             approved_by = approver.full_name
 
-            # Capacity check on approve
+            # ظرفیت کلی رویداد
             if action == "approve" and ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
                 await q.answer("ظرفیت تکمیل است؛ امکان تایید نیست.", show_alert=True)
                 base_text = q.message.text or ""
@@ -478,7 +530,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
 
-            # Inform user
+            # سقف آقایان
+            info_preview = PENDING.get(user_chat_id, {})
+            if action == "approve" and info_preview.get("gender") == "male":
+                if male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
+                    await q.answer("سقف آقایان تکمیل است؛ امکان تایید نیست.", show_alert=True)
+                    base_text = q.message.text or ""
+                    stamp = "⚠️ تلاش برای تایید آقا، اما سقف آقایان تکمیل است."
+                    try:
+                        await q.edit_message_text(base_text + "\n\n" + stamp)
+                    except:
+                        pass
+                    # اطلاع به کاربر:
+                    try:
+                        await context.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
+                    except:
+                        pass
+                    return
+
+            # پیام به کاربر
             if action == "approve":
                 detail = (
                     "🎉 ثبت‌نامت تایید شد!\n\n"
@@ -496,7 +566,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
 
-            # Remove buttons + stamp approver
+            # حذف دکمه‌ها + مهر تایید/رد
             base_text = q.message.text or ""
             stamp = "✅ توسط {0} تایید شد.".format(approved_by) if action == "approve" else "❌ توسط {0} رد شد.".format(approved_by)
             try:
@@ -507,7 +577,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
 
-            # cancel auto-approve task if exists
+            # لغو تسک auto-approve اگر وجود دارد
             info = PENDING.get(user_chat_id)
             if info and info.get("task"):
                 try:
@@ -515,21 +585,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-            # On approve: move to roster
+            # انتقال به ROSTER
             if action == "approve":
                 info = PENDING.pop(user_chat_id, None)
                 if info:
                     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
                         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text="⚠️ ظرفیت پر شد؛ تایید نهایی انجام نشد.")
                     else:
-                        ROSTER.setdefault(ev_id, []).append({
-                            "name": info.get("name","—"),
-                            "username": info.get("username"),
-                            "phone": info.get("phone","—"),
-                            "when": info.get("when","—"),
-                            "event_title": info.get("event_title","—"),
-                        })
-                        await _update_roster_message(context)
+                        # چک مجدد سقف آقایان
+                        if info.get("gender") == "male" and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
+                            try:
+                                await context.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
+                            except:
+                                pass
+                        else:
+                            ROSTER.setdefault(ev_id, []).append({
+                                "name": info.get("name","—"),
+                                "username": info.get("username"),
+                                "phone": info.get("phone","—"),
+                                "gender": info.get("gender"),
+                                "age": info.get("age"),
+                                "when": info.get("when","—"),
+                                "event_title": info.get("event_title","—"),
+                            })
+                            await _update_roster_message(context)
 
             await q.answer("انجام شد.")
         except Exception as e:
@@ -582,6 +661,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["phone"] = text
         await update.message.reply_text("دریافت شد ✅", reply_markup=reply_main)
         return await render_level(update, context, edit=False)
+    if step == "age":
+        # سن: عدد 1..120 یا "-"
+        if text == "-" or text == "—":
+            context.user_data["age"] = None
+        else:
+            if not re.fullmatch(r"\d{1,3}", text):
+                return await update.message.reply_text("لطفاً سن را به عدد وارد کن (مثلاً 23) یا '-' برای عدم اعلام.")
+            age_int = int(text)
+            if not (1 <= age_int <= 120):
+                return await update.message.reply_text("سن نامعتبر است. یک عدد بین 1 تا 120 بفرست یا '-' برای عدم اعلام.")
+            context.user_data["age"] = age_int
+        return await render_note(update, context, edit=False)
     if step == "note":
         context.user_data["note"] = text
         return await finalize_and_send(update, context)
@@ -601,7 +692,25 @@ async def handle_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     lvl_map = {"lvl_A": "Beginner (A1–A2)", "lvl_B": "Intermediate (B1–B2)", "lvl_C": "Advanced (C1+)"}
     context.user_data["level"] = lvl_map.get(data, "Unknown")
-    await render_note(update, context, edit=True)
+    await render_gender(update, context, edit=True)
+
+async def handle_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    data = q.data  # gender_m / gender_f / gender_n
+    await q.answer()
+    gmap = {"gender_m": "male", "gender_f": "female", "gender_n": "na"}
+    gender = gmap.get(data, "na")
+    context.user_data["gender"] = gender
+
+    # اگر کاربر «مرد» است و سقف پر شده، همین‌جا قطع کنیم
+    ev_id = context.user_data.get("selected_event_id") or (EVENTS[0]["id"] if EVENTS else None)
+    if gender == "male" and ev_id and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
+        await q.edit_message_text(MALE_CAPACITY_FULL_MSG,
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
+        clear_flow(context)
+        return
+
+    await render_age(update, context, edit=True)
 
 # =========================
 #  AUTO-APPROVE via asyncio (12h)
@@ -619,10 +728,24 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
         PENDING.pop(user_chat_id, None)
         return
 
-    # capacity check
+    # ظرفیت کلی
     if ev.get("capacity") and remaining_capacity(ev) <= 0:
         try:
             await app.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
+        except Exception:
+            pass
+        try:
+            if info.get("admin_msg_id"):
+                await app.bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=info["admin_msg_id"])
+        except Exception:
+            pass
+        PENDING.pop(user_chat_id, None)
+        return
+
+    # سقف آقایان
+    if info.get("gender") == "male" and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
+        try:
+            await app.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
         except Exception:
             pass
         try:
@@ -638,6 +761,8 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
         "name": info.get("name","—"),
         "username": info.get("username"),
         "phone": info.get("phone","—"),
+        "gender": info.get("gender"),
+        "age": info.get("age"),
         "when": info.get("when","—"),
         "event_title": info.get("event_title","—"),
     })
@@ -679,9 +804,15 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ev_id = u.get("selected_event_id") or (EVENTS[0]["id"] if EVENTS else None)
     ev = get_event(ev_id)
 
-    # Capacity check just before sending to admin
+    # ظرفیت کلی رویداد
     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
         await update.effective_chat.send_message(CAPACITY_CANCEL_MSG, reply_markup=reply_main)
+        clear_flow(context)
+        return
+
+    # سقف آقایان (پیش از ارسال به ادمین)
+    if u.get("gender") == "male" and ev_id and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
+        await update.effective_chat.send_message(MALE_CAPACITY_FULL_MSG, reply_markup=reply_main)
         clear_flow(context)
         return
 
@@ -690,6 +821,8 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 نام: {u.get('name','—')}\n"
         f"📱 تماس: {u.get('phone','—')}\n"
         f"🗣️ سطح: {u.get('level','—')}\n"
+        f"⚧ جنسیت: {({'male':'مرد','female':'زن','na':'ترجیح می‌دهم نگویم'}).get(u.get('gender'),'—')}\n"
+        f"🎂 سن: {u.get('age','—') if u.get('age') is not None else '—'}\n"
         f"📝 توضیحات: {u.get('note','—')}\n"
     )
     if ev:
@@ -711,6 +844,8 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 نام: {u.get('name','—')}\n"
             f"📱 تماس: {u.get('phone','—')}\n"
             f"🗣️ سطح: {u.get('level','—')}\n"
+            f"⚧ جنسیت: {({'male':'مرد','female':'زن','na':'ترجیح می‌دهم نگویم'}).get(u.get('gender'),'—')}\n"
+            f"🎂 سن: {u.get('age','—') if u.get('age') is not None else '—'}\n"
             f"📝 توضیحات: {u.get('note','—')}\n\n"
         )
         if ev:
@@ -726,6 +861,8 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "phone": u.get("phone","—"),
             "level": u.get("level","—"),
             "note":  u.get("note","—"),
+            "gender": u.get("gender"),
+            "age":    u.get("age"),
             "event_id": ev_id,
             "event_title": ev.get("title") if ev else "—",
             "when": ev.get("when") if ev else "—",
@@ -755,8 +892,8 @@ async def maybe_write_to_sheet(user_info, ev):
             sh = client.create(SHEET_NAME)
         ws = sh.sheet1
         try:
-            if ws.get('A1:G1') == []:
-                ws.update('A1:G1', [["Timestamp","Event","When","Name","Phone","Level","Note"]])
+            if ws.get('A1:I1') == []:
+                ws.update('A1:I1', [["Timestamp","Event","When","Name","Phone","Level","Gender","Age","Note"]])
         except Exception:
             pass
         now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -767,6 +904,8 @@ async def maybe_write_to_sheet(user_info, ev):
             user_info.get('name','—'),
             user_info.get('phone','—'),
             user_info.get('level','—'),
+            ({'male':'مرد','female':'زن','na':'N/A'}).get(user_info.get('gender'),'—'),
+            (user_info.get('age') if user_info.get('age') is not None else '—'),
             user_info.get('note','—'),
         ])
     except Exception as e:
@@ -814,6 +953,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity)."}
-
-
+    return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5)."}
