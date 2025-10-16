@@ -51,11 +51,11 @@ MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 DEFAULT_EVENTS = [
     {
         "id": "intro01",
-        "title": "Introduction Meeting!",
-        "when": "پنجشنبه ۲۴ مهر - ۱۸:۰۰",
+        "title": "2nd Meeting!",
+        "when": "پنجشنبه ۱ آبان- ۱۸:۰۰",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "Our first ChillChat session — a friendly introduction meetup! Get to know new people, talk about yourself, and practice English in a cozy, stress-free atmosphere. Topic: it will be decided in the group.",
+        "desc": "The legendary 2nd session. It'll all gonna be about chill & chat. btw topic will be decided in the group. stay tuned!",
     }
 ]
 try:
@@ -117,7 +117,7 @@ RULES = (
 
 # معرفی کافه — متن کامل
 CAFE_INTRO_TEXT = (
-   "اسم و آدرس کافه رو برای @ifyoulostme بفرست"
+   "اسم و آدرس کافه مورد علاقه‌ت رو برای @ifyoulostme بفرست"
 )
 
 # پیام‌های ظرفیت
@@ -972,6 +972,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5)."}
+
 
 
 
