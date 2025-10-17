@@ -249,10 +249,10 @@ def _admin_match(user) -> bool:
     return uname in ADMIN_USERNAMES
 
 def _is_authorized_in_datacenter(update: Update) -> bool:
-    in_dc = (update.effective_chat and update.effective_chat.id == DATACENTER_CHAT_ID)
-    if not in_dc:
-        return False
+    # FIXED: فقط هویت کاربر را بررسی می‌کند، نه چت
     user = update.effective_user
+    if not user:
+        return False
     return _owner_match(user) or _admin_match(user)
 
 # ====== Datacenter pinned message (human text; JSON optional) ======
@@ -1100,4 +1100,3 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, admin broadcast)." }
-
