@@ -77,7 +77,7 @@ ADMIN_USERNAMES = _parse_username_set(os.environ.get("ADMIN_USERNAMES", ""))
 # --- DEFAULT EVENTS (override via EVENTS_JSON) ---
 DEFAULT_EVENTS = [
     {
-        "id": "intro01",
+        "id": "4002",
         "title": "2nd Meeting!",
         "when": "پنجشنبه ۱ آبان- ۱۸:۰۰",
         "price": "سفارش از کافه",
@@ -1100,3 +1100,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, admin broadcast)." }
+
