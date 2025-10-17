@@ -1100,5 +1100,3 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, admin broadcast)." }
-
-
