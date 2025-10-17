@@ -162,7 +162,7 @@ def event_text_user(ev):
         f"💶 {ev.get('price','') or 'Free'}",
     ]
     if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
-    parts.append("\n(آدرس دقیق کافه پیش از رویداد در ChillChat Official اعلام می‌شود.)")
+    parts.append("\n(آدرس دقیق کافه پیش از رویداد در @Chillchat_official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
@@ -983,4 +983,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5)."}
+
 
