@@ -162,7 +162,7 @@ def event_text_user(ev):
         f"💶 {ev.get('price','') or 'Free'}",
     ]
     if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
-    parts.append("\n(آدرس دقیق کافه پیش از رویداد در @Chillchat_official اعلام می‌شود.)")
+    parts.append("\n(آدرس دقیق کافه پیش از رویداد در ChillChat Official اعلام می‌شود.)")
     return "\n".join(parts)
 
 def event_text_admin(ev):
