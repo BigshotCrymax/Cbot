@@ -555,24 +555,41 @@ async def cmd_broadcast_event(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"📣 ارسال به ایونت {ev_id} تمام شد. موفق: {sent} | ناموفق: {failed}")
 
 async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _is_authorized_in_datacenter(update):
-        await update.message.reply_text("⛔️ اجازه نداری.")
+    """ارسال پیام خصوصی توسط Owner/Admin"""
+    user = update.effective_user
+    if not is_privileged(user):
+        await update.message.reply_text("اجازه نداری. ⛔️")
         return
-    args = (update.message.text or "").split(maxsplit=2)
-    if len(args) < 3:
-        await update.message.reply_text("الگو: /dm <chat_id> <message>\nمثال: /dm 123456789 سلام!")
+
+    text = update.message.text.strip().split(maxsplit=2)
+    if len(text) < 3 or not text[1].startswith("@"):
+        await update.message.reply_text("فرمت نادرست است.\nمثال:\n`/dm @username پیام شما`", parse_mode="Markdown")
         return
+
+    target_username = text[1].lstrip("@").lower()
+    message_to_send = text[2]
+
+    # تلاش برای یافتن chat_id از رُستر یا حافظه
+    target_id = None
+    for ev_list in ROSTER.values():
+        for r in ev_list:
+            if r.get("username", "").lower() == target_username and "chat_id" in r:
+                target_id = r["chat_id"]
+                break
+        if target_id:
+            break
+
+    if not target_id:
+        # کاربر هنوز بات را استارت نکرده یا ثبت‌نام نکرده
+        await update.message.reply_text("❌ کاربر مورد نظر در دیتابیس یافت نشد یا هنوز با بات صحبت نکرده.")
+        return
+
     try:
-        uid = int(args[1])
-    except ValueError:
-        await update.message.reply_text("chat_id نامعتبر است.")
-        return
-    payload = args[2].strip()
-    try:
-        await context.bot.send_message(chat_id=uid, text=payload)
-        await update.message.reply_text("✅ ارسال شد.")
+        await context.bot.send_message(chat_id=target_id, text=message_to_send)
+        await update.message.reply_text(f"✅ پیام برای @{target_username} ارسال شد.")
     except Exception as e:
-        await update.message.reply_text(f"ارسال ناموفق: {e}")
+        await update.message.reply_text(f"⚠️ ارسال ناموفق بود:\n{e}")
+
 
 async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
@@ -900,14 +917,15 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
 
     # add to roster
     ROSTER.setdefault(ev_id, []).append({
-        "name": info.get("name","—"),
-        "username": info.get("username"),
-        "phone": info.get("phone","—"),
-        "gender": info.get("gender"),
-        "age": info.get("age"),
-        "when": info.get("when","—"),
-        "event_title": info.get("event_title","—"),
-        "user_chat_id": user_chat_id,
+       "name": info.get("name","—"),
+    "username": info.get("username"),
+    "phone": info.get("phone","—"),
+    "gender": info.get("gender"),
+    "age": info.get("age"),
+    "when": info.get("when","—"),
+    "event_title": info.get("event_title","—"),
+    "chat_id": info.get("chat_id"),
+        
     })
     await save_state_to_pinned(app)
 
@@ -1009,7 +1027,8 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "when": ev.get('when') if ev else "—",
             "username": update.effective_user.username if update.effective_user else None,
             "admin_msg_id": admin_msg.message_id if admin_msg else None,
-            "task": task,
+           "task": task,
+            "chat_id": update.effective_chat.id,
         }
 
     await maybe_write_to_sheet(u, ev)
@@ -1100,3 +1119,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, admin broadcast)." }
+
