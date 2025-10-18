@@ -14,6 +14,7 @@ from telegram import (
     Update,
     InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton,
+    Chat,
 )
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
@@ -26,17 +27,17 @@ from telegram.ext import (
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))  # گروه ادمین/دیتاسنتر
-DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))
+DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))  # اگر جداست ست کن
 
 SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "ifyoulostme")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")
 GROUP_URL   = os.environ.get("GROUP_URL", "")
 INSTAGRAM_URL = os.environ.get("INSTAGRAM_URL", "")
-CAFE_INTRO_USERNAME = os.environ.get("CAFE_INTRO_USERNAME", "ifyoulostme")  # برای «معرفی کافه»
+CAFE_INTRO_USERNAME = os.environ.get("CAFE_INTRO_USERNAME", "ifyoulostme")  # برای «معرفی کافه به chillchat»
 
-# Owner/Admin ACL برای قابلیت DM
-OWNER_USERNAME = (os.environ.get("OWNER_USERNAME") or "").strip().lstrip("@").lower()
-ADMIN_USERNAMES = [u.strip().lstrip("@").lower() for u in (os.environ.get("ADMIN_USERNAMES","").split(",") if os.environ.get("ADMIN_USERNAMES") else [])]
+# اعلان/پخش پیام (فقط Owner/Admins)
+OWNER_USERNAME = (os.environ.get("OWNER_USERNAME") or "").strip().lstrip("@")
+ADMIN_USERNAMES = [u.strip().lstrip("@") for u in (os.environ.get("ADMIN_USERNAMES") or "").split(",") if u.strip()]
 
 # (Optional) Google Sheets
 GSPREAD_CREDS_JSON = os.environ.get("GSPREAD_CREDS_JSON")
@@ -78,10 +79,10 @@ except Exception:
 #     IN-MEMORY STORAGE
 # =========================
 # PENDING: درخواست‌های در انتظار تایید
-# هر ورودی: {name, phone, level, note, gender, age, event_id, event_title, when, username, chat_id, admin_msg_id, task}
+# هر ورودی: {name, phone, level, note, gender, age, event_id, event_title, when, username, admin_msg_id, task}
 PENDING = {}  # key: user_chat_id -> dict
 # ROSTER: افراد تاییدشده به تفکیک رویداد
-# هر آیتم: {name, username, phone, gender, age, when, event_title, chat_id}
+# هر آیتم: {chat_id, name, username, phone, gender, age, when, event_title}
 ROSTER = {}   # key: event_id -> list[dict]
 ROSTER_MESSAGE_ID = None  # پیام پین‌شده دیتاسنتر
 
@@ -119,8 +120,10 @@ RULES = (
     "با رعایت این موارد، تجربهٔ بهتری خواهیم داشت ☕❤️"
 )
 
-# معرفی کافه — متن مختصر
-CAFE_INTRO_TEXT = "اسم و آدرس کافهٔ مورد علاقه‌ت رو برای @" + CAFE_INTRO_USERNAME + " بفرست"
+CAFE_INTRO_TEXT = (
+    "🏠 **معرفی کافه به ChillChat**\n"
+    f"اسم و آدرس کافهٔ پیشنهادی‌ت رو برای *@{CAFE_INTRO_USERNAME}* بفرست 🙌"
+)
 
 # پیام‌های ظرفیت
 CAPACITY_CANCEL_MSG = (
@@ -128,7 +131,7 @@ CAPACITY_CANCEL_MSG = (
     "برای شرکت در برنامه‌های بعدی، از «🎉 رویدادهای پیش‌رو» رویداد دیگری را انتخاب کنید."
 )
 CAPACITY_FULL_PREVENT_MSG = "❌ ظرفیت این رویداد تکمیل است. لطفاً رویداد دیگری را انتخاب کن."
-MALE_CAPACITY_FULL_MSG = "❌ متأسفانه سقف شرکت‌کنندگان برای این رویداد تکمیل شده است."
+MALE_CAPACITY_FULL_MSG = "❌ سقف ظرفیت شرکت‌کنندگان برای این رویداد تکمیل شده است."
 
 def SOCIAL_TEXT():
     return (
@@ -142,13 +145,10 @@ def SOCIAL_TEXT():
 # =========================
 #          HELPERS
 # =========================
-def is_owner_or_admin(tg_username: str|None) -> bool:
-    if not tg_username:
-        return False
-    u = tg_username.strip().lstrip("@").lower()
-    if OWNER_USERNAME and u == OWNER_USERNAME:
-        return True
-    return u in ADMIN_USERNAMES
+def is_admin_user(user) -> bool:
+    uname = (user.username or "").lower()
+    allowed = set([OWNER_USERNAME.lower()] if OWNER_USERNAME else []) | {u.lower() for u in ADMIN_USERNAMES}
+    return bool(uname and uname.lower() in allowed)
 
 def get_event(ev_id):
     return next((e for e in EVENTS if e.get("id") == ev_id), None)
@@ -163,27 +163,12 @@ def remaining_capacity(ev: dict) -> int:
 def male_count(ev_id: str) -> int:
     return sum(1 for r in ROSTER.get(ev_id, []) if r.get("gender") == "male")
 
-def resolve_chat_id_by_username(username: str|None):
-    """بر اساس @username از بین ROSTER و PENDING، chat_id را برمی‌گرداند (اگر پیدا شد)."""
-    if not username:
-        return None
-    u = username.strip().lstrip("@").lower()
-    # در ROSTER
-    for ev_id, people in ROSTER.items():
-        for r in people:
-            if (r.get("username") or "").lower() == u:
-                return r.get("chat_id")
-    # در PENDING
-    for _, info in PENDING.items():
-        if (info.get("username") or "").lower() == u:
-            return info.get("chat_id")
-    return None
-
 def event_text_user(ev):
     # بدون نمایش ظرفیت
     parts = [
         f"**{ev.get('title','')}**",
         f"🕒 {ev.get('when','')}",
+        f"📍 {ev.get('place','—')}",
         f"💶 {ev.get('price','') or 'Free'}",
     ]
     if ev.get("desc"):  parts.append(f"📝 {ev['desc']}")
@@ -199,6 +184,8 @@ def event_text_admin(ev):
         f"📌 {ev.get('title','')}\n"
         f"🕒 {ev.get('when','')}\n"
         f"{cap_line}"
+        f"📍 {ev.get('place','—')}\n"
+        f"🗺️ {ev.get('maps','—')}\n"
         f"💶 {ev.get('price','Free')}\n"
         f"📝 {ev.get('desc','—')}"
     )
@@ -221,6 +208,62 @@ def current_step(context):
 def clear_flow(context):
     for k in ["nav","origin","selected_event_id","name","phone","level","gender","age","note","feedback_mode"]:
         context.user_data.pop(k, None)
+
+# ====== Pinned JSON Restore ======
+def _extract_json_from_text(text: str):
+    if not text:
+        return None
+    m = re.search(r"```json\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return None
+
+async def restore_from_pinned(application):
+    """
+    پیام پین‌شده دیتاسنتر را می‌خواند. اگر JSON داشت:
+      - ROSTER را برمی‌گرداند
+      - ROSTER_MESSAGE_ID را روی همان پیام می‌گذارد
+    """
+    global ROSTER_MESSAGE_ID, ROSTER
+    if not DATACENTER_CHAT_ID:
+        return
+
+    try:
+        chat: Chat = await application.bot.get_chat(DATACENTER_CHAT_ID)
+    except Exception as e:
+        print("restore_from_pinned: get_chat failed:", e)
+        return
+
+    pm = getattr(chat, "pinned_message", None)
+    if not pm:
+        print("restore_from_pinned: no pinned_message found.")
+        return
+
+    text = getattr(pm, "text", None) or getattr(pm, "caption", None)
+    data = _extract_json_from_text(text or "")
+    if not data:
+        print("restore_from_pinned: pinned has no JSON block.")
+        ROSTER_MESSAGE_ID = pm.message_id
+        return
+
+    restored_roster = data.get("roster")
+    if isinstance(restored_roster, dict):
+        ok = True
+        for k, v in restored_roster.items():
+            if not isinstance(k, str) or not isinstance(v, list):
+                ok = False
+                break
+        if ok:
+            ROSTER = restored_roster
+            print(f"restore_from_pinned: roster restored for {len(ROSTER)} events.")
+        else:
+            print("restore_from_pinned: roster shape invalid, skip.")
+
+    ROSTER_MESSAGE_ID = pm.message_id
+    print(f"restore_from_pinned: pinned message id set to {ROSTER_MESSAGE_ID}.")
 
 # ====== Datacenter pinned message (human text; JSON optional) ======
 def _build_human_roster_text():
@@ -316,7 +359,6 @@ def level_inline():
     ])
 
 def gender_inline():
-    # فقط مرد/زن
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👨 مرد", callback_data="gender_m"),
          InlineKeyboardButton("👩 زن",  callback_data="gender_f")],
@@ -324,8 +366,8 @@ def gender_inline():
     ])
 
 def age_inline():
-    # بدون «ترجیح می‌دهم نگویم»؛ کاربر عدد می‌فرستد
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➖ ترجیح می‌دهم نگویم", callback_data="age_na")],
         [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data="back_step")],
     ])
 
@@ -352,6 +394,7 @@ async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
 async def render_event_list(update: Update):
     rows = []
     for e in EVENTS:
+        # بدون نمایش ظرفیت
         label = f"{e['title']} | {e['when']}"
         rows.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
     rows.append([InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")])
@@ -387,7 +430,7 @@ async def render_gender(update: Update, context: ContextTypes.DEFAULT_TYPE, edit
 
 async def render_age(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "age")
-    txt = "سن‌ت رو به *عدد* بفرست (مثلاً 24)."
+    txt = "سن‌ت رو به *عدد* بفرست (مثلاً 24). یا دکمهٔ «ترجیح می‌دهم نگویم» رو بزن."
     if update.callback_query and edit:
         await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=age_inline())
     else:
@@ -465,61 +508,90 @@ async def cmd_roster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ خطا در نمایش لیست: {e}")
 
-# --- DM FEATURE: only owner/admins ---
-async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_owner_or_admin(user.username):
-        return
-    text = update.message.text or ""
-    m = re.match(r"^/dm\s+@?([A-Za-z0-9_]{5,})\s+(.+)$", text, re.S)
-    if not m:
-        await update.message.reply_text("فرمت درست: `/dm @username پیام`", parse_mode="Markdown")
-        return
-    uname, msg = m.group(1), m.group(2).strip()
-    to_chat_id = resolve_chat_id_by_username(uname)
-    if not to_chat_id:
-        await update.message.reply_text("پیدا نشد: یا کاربر هنوز پیام به بات نداده، یا در لیست نیست.")
-        return
-    try:
-        await context.bot.send_message(chat_id=to_chat_id, text=msg)
-        await update.message.reply_text("✅ ارسال شد.")
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ خطا در ارسال: {e}")
+# --- Announce/Broadcast commands (owner/admin only) ---
+def _parse_pipe_args(text: str):
+    # expects "/cmd something | message..."
+    parts = text.split(" ", 1)
+    rest = parts[1] if len(parts) > 1 else ""
+    if "|" in rest:
+        a, b = rest.split("|", 1)
+        return a.strip(), b.strip()
+    return rest.strip(), ""
 
-async def cmd_dmall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_owner_or_admin(user.username):
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /broadcast <event_id> | <message>
+    if not is_admin_user(update.effective_user) or update.effective_chat.id != DATACENTER_CHAT_ID:
         return
-    text = update.message.text or ""
-    m = re.match(r"^/dmall\s+(.+)$", text, re.S)
-    if not m:
-        await update.message.reply_text("فرمت درست: `/dmall پیام`", parse_mode="Markdown")
+    ev_id, msg = _parse_pipe_args(update.message.text or "")
+    if not ev_id or not msg:
+        await update.message.reply_text("فرمت: `/broadcast <event_id> | <message>`", parse_mode="Markdown")
         return
-    msg = m.group(1).strip()
-    sent = 0
+    if ev_id not in {e["id"] for e in EVENTS}:
+        await update.message.reply_text("event_id نامعتبره.")
+        return
+    sent = 0; fail = 0
+    for r in ROSTER.get(ev_id, []):
+        cid = r.get("chat_id")
+        if not cid: 
+            fail += 1
+            continue
+        try:
+            await context.bot.send_message(chat_id=cid, text=msg)
+            sent += 1
+        except Exception:
+            fail += 1
+    await update.message.reply_text(f"ارسال شد ✅ {sent} | ناموفق ❌ {fail}")
+
+async def cmd_broadcast_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /broadcast_all | <message>
+    if not is_admin_user(update.effective_user) or update.effective_chat.id != DATACENTER_CHAT_ID:
+        return
+    _, msg = _parse_pipe_args(update.message.text or "")
+    if not msg:
+        await update.message.reply_text("فرمت: `/broadcast_all | <message>`", parse_mode="Markdown")
+        return
+    # unique chat_ids across all events
     seen = set()
-    # از ROSTER همه chat_id ها
-    for _, people in ROSTER.items():
+    sent = 0; fail = 0
+    for ev_id, people in ROSTER.items():
         for r in people:
             cid = r.get("chat_id")
             if cid and cid not in seen:
+                seen.add(cid)
                 try:
                     await context.bot.send_message(chat_id=cid, text=msg)
                     sent += 1
-                    seen.add(cid)
-                except:
-                    pass
-    # از PENDING هم اضافه
-    for _, info in PENDING.items():
-        cid = info.get("chat_id")
-        if cid and cid not in seen:
-            try:
-                await context.bot.send_message(chat_id=cid, text=msg)
-                sent += 1
-                seen.add(cid)
-            except:
-                pass
-    await update.message.reply_text(f"✅ پیام برای {sent} نفر ارسال شد.")
+                except Exception:
+                    fail += 1
+    await update.message.reply_text(f"ارسال شد ✅ {sent} | ناموفق ❌ {fail}")
+
+async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /dm @username | <message>
+    if not is_admin_user(update.effective_user) or update.effective_chat.id != DATACENTER_CHAT_ID:
+        return
+    target, msg = _parse_pipe_args(update.message.text or "")
+    target = target.lstrip("@")
+    if not target or not msg:
+        await update.message.reply_text("فرمت: `/dm @username | <message>`", parse_mode="Markdown")
+        return
+    # find user by username in roster
+    chat_id = None
+    for people in ROSTER.values():
+        for r in people:
+            if (r.get("username") or "").lower() == target.lower():
+                chat_id = r.get("chat_id")
+                if chat_id:
+                    break
+        if chat_id:
+            break
+    if not chat_id:
+        await update.message.reply_text("کاربر در لیست رویدادها پیدا نشد یا chat_id ذخیره نشده.")
+        return
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=msg)
+        await update.message.reply_text("پیام ارسال شد ✅")
+    except Exception as e:
+        await update.message.reply_text(f"ارسال ناموفق ❌: {e}")
 
 async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
@@ -533,6 +605,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("gender_"):
         return await handle_gender(update, context)
+
+    if data == "age_na":
+        # سن = اعلام نمی‌کنم
+        context.user_data["age"] = None
+        await q.answer()
+        return await render_level(update, context, edit=True)
 
     await q.answer()
 
@@ -557,10 +635,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.edit_message_text(SOCIAL_TEXT(), parse_mode="Markdown",
                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]]))
 
+    # Feedback
     if data == "feedback_start":
         context.user_data["feedback_mode"] = True
         return await q.edit_message_text(
-            "📝 نظرت درباره رویدادها، پیشنهاد برای بهبود، یا هر حرف دیگه‌ای رو بنویس و بفرست.\n"
+            "📝 نظرت درباره رویدادها، پیشنهاد بهبود، یا هر حرف دیگه‌ای رو بنویس و بفرست.\n"
             "پیامت مستقیم برای تیم ChillChat ارسال میشه 💌",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="back_home")]])
         )
@@ -575,6 +654,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await render_event_detail(update, ev)
 
     if data == "register" or data.startswith("register_"):
+        # انتخاب رویداد
         target_ev = None
         if data.startswith("register_"):
             ev_id = data.split("_",1)[1]
@@ -589,6 +669,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_ev and context.user_data.get("selected_event_id"):
             target_ev = get_event(context.user_data["selected_event_id"])
 
+        # ظرفیت کلی رویداد
         if target_ev and target_ev.get("capacity") and remaining_capacity(target_ev) <= 0:
             return await q.edit_message_text(
                 CAPACITY_FULL_PREVENT_MSG,
@@ -619,17 +700,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
 
-            # سقف آقایان
+            # سقف آقایان (نهایی)
             info_preview = PENDING.get(user_chat_id, {})
             if action == "approve" and info_preview.get("gender") == "male":
                 if male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
-                    await q.answer("سقف شرکت‌کنندگان تکمیل است؛ امکان تایید نیست.", show_alert=True)
+                    await q.answer("سقف آقایان تکمیل است؛ امکان تایید نیست.", show_alert=True)
                     base_text = q.message.text or ""
-                    stamp = "⚠️ تلاش برای تایید (آقا)، اما سقف تکمیل است."
+                    stamp = "⚠️ تلاش برای تایید آقا، اما سقف آقایان تکمیل است."
                     try:
                         await q.edit_message_text(base_text + "\n\n" + stamp)
                     except:
                         pass
+                    # اطلاع به کاربر:
                     try:
                         await context.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
                     except:
@@ -642,6 +724,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "🎉 ثبت‌نامت تایید شد!\n\n"
                     f"📌 {ev.get('title','')}\n"
                     f"🕒 {ev.get('when','')}\n"
+                    f"📍 {ev.get('place','—')}\n"
+                    f"🗺️ {ev.get('maps','—')}\n"
                     f"💶 {ev.get('price','Free')}\n"
                     f"📝 {ev.get('desc','—')}\n"
                 ) if ev else "🎉 ثبت‌نامت تایید شد!"
@@ -678,6 +762,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
                         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text="⚠️ ظرفیت پر شد؛ تایید نهایی انجام نشد.")
                     else:
+                        # چک مجدد سقف آقایان
                         if info.get("gender") == "male" and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
                             try:
                                 await context.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
@@ -685,6 +770,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 pass
                         else:
                             ROSTER.setdefault(ev_id, []).append({
+                                "chat_id": user_chat_id,  # برای DM و Broadcast
                                 "name": info.get("name","—"),
                                 "username": info.get("username"),
                                 "phone": info.get("phone","—"),
@@ -692,7 +778,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 "age": info.get("age"),
                                 "when": info.get("when","—"),
                                 "event_title": info.get("event_title","—"),
-                                "chat_id": info.get("chat_id"),
                             })
                             await _update_roster_message(context)
 
@@ -743,16 +828,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("لطفاً نام معتبر وارد کن (۲ تا ۶۰ کاراکتر).")
 
     if step == "age":
-        if not re.fullmatch(r"\d{1,3}", text):
-            return await update.message.reply_text("لطفاً سن را به عدد وارد کن (مثلاً 23).")
-        age_int = int(text)
-        if not (1 <= age_int <= 120):
-            return await update.message.reply_text("سن نامعتبر است. یک عدد بین 1 تا 120 بفرست.")
-        context.user_data["age"] = age_int
+        if text == "-" or text == "—":
+            context.user_data["age"] = None
+        else:
+            if not re.fullmatch(r"\d{1,3}", text):
+                return await update.message.reply_text("لطفاً سن را به عدد وارد کن (مثلاً 23) یا از دکمه «ترجیح می‌دهم نگویم» استفاده کن.")
+            age_int = int(text)
+            if not (1 <= age_int <= 120):
+                return await update.message.reply_text("سن نامعتبر است. یک عدد بین 1 تا 120 بفرست یا روی «ترجیح می‌دهم نگویم» بزن.")
+            context.user_data["age"] = age_int
         return await render_level(update, context, edit=False)
 
     if step == "level":
-        # این مرحله با کلیدهای inline کنترل می‌شود؛ اگر کسی متن فرستاد، دوباره منو می‌دهیم
         return await render_level(update, context, edit=False)
 
     if step == "phone":
@@ -789,7 +876,7 @@ async def handle_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gmap = {"gender_m": "male", "gender_f": "female"}
     gender = gmap.get(data, "male")
     context.user_data["gender"] = gender
-    # بدون هیچ بلاکی در این مرحله — ادامه‌ی فرایند
+    # بدون هیچ بلاکی در این مرحله (برای پنهان‌کردن سقف آقایان)
     await render_age(update, context, edit=True)
 
 # =========================
@@ -838,6 +925,7 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
 
     # add to roster
     ROSTER.setdefault(ev_id, []).append({
+        "chat_id": user_chat_id,  # ذخیره برای DM/Broadcast
         "name": info.get("name","—"),
         "username": info.get("username"),
         "phone": info.get("phone","—"),
@@ -845,7 +933,6 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
         "age": info.get("age"),
         "when": info.get("when","—"),
         "event_title": info.get("event_title","—"),
-        "chat_id": info.get("chat_id"),
     })
     await save_state_to_pinned(app)
 
@@ -854,6 +941,8 @@ async def delayed_auto_approve(app, user_chat_id: int, ev_id: str, delay: int = 
         "🎉 ثبت‌نامت تایید شد!\n\n"
         f"📌 {ev.get('title','')}\n"
         f"🕒 {ev.get('when','')}\n"
+        f"📍 {ev.get('place','—')}\n"
+        f"🗺️ {ev.get('maps','—')}\n"
         f"💶 {ev.get('price','Free')}\n"
         f"📝 {ev.get('desc','—')}\n"
         "(Auto-approved by bot)"
@@ -889,14 +978,12 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_flow(context)
         return
 
-    # **بررسی سقف آقایان فقط در پایان فرایند**
+    # سقف آقایان (در پایان فرایند؛ نه نمایش ظرفیت، فقط پیام نهایی)
     if u.get("gender") == "male" and ev_id and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
-        await update.effective_chat.send_message(
-            MALE_CAPACITY_FULL_MSG + "\n\n"
-            "اگر عضو کانال ChillChat نیستی، حتماً جوین بده تا از خبرهای بعدی جا نمونی 🌟"
-            + (f"\n📢 کانال: {CHANNEL_URL}" if CHANNEL_URL else ""),
-            reply_markup=reply_main
-        )
+        await update.effective_chat.send_message(MALE_CAPACITY_FULL_MSG, reply_markup=reply_main)
+        # یادآوری جوین کانال (حتی اگر تایید نشد، مشکلی نیست)
+        if CHANNEL_URL:
+            await update.effective_chat.send_message(f"📢 برای اینکه از اخبار جا نمونی، عضو کانال شو:\n{CHANNEL_URL}")
         clear_flow(context)
         return
 
@@ -913,11 +1000,9 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary += f"\n📌 رویداد: {ev.get('title','')}\n🕒 زمان: {ev.get('when','')}\n(آدرس پس از تایید ارسال می‌شود.)"
     await update.effective_chat.send_message(summary, reply_markup=reply_main)
 
-    # دعوت به کانال بعد از ثبت درخواست
+    # یادآوری جوینِ کانال
     if CHANNEL_URL:
-        await update.effective_chat.send_message(
-            "برای اینکه از برنامه‌ها جا نمونی، عضو کانال رسمی ChillChat شو 👇\n" + CHANNEL_URL
-        )
+        await update.effective_chat.send_message(f"📢 برای اینکه از اخبار جا نمونی، عضو کانال شو:\n{CHANNEL_URL}")
 
     # Send to admin group
     admin_msg = None
@@ -956,8 +1041,7 @@ async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "event_id": ev_id,
             "event_title": ev.get('title') if ev else "—",
             "when": ev.get('when') if ev else "—",
-            "username": (update.effective_user.username if update.effective_user else None),
-            "chat_id": update.effective_chat.id,  # <<<<<< ذخیره chat_id
+            "username": update.effective_user.username if update.effective_user else None,
             "admin_msg_id": admin_msg.message_id if admin_msg else None,
             "task": task,
         }
@@ -1013,11 +1097,13 @@ application = ApplicationBuilder().token(BOT_TOKEN).job_queue(None).build()
 
 # هندلرها
 application.add_handler(CommandHandler("start", cmd_start))
+# ری‌استارت منعطف (با/بی ایموجی)
 application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^شروع\s*مجدد(?:\s*🔄)?$"), shortcut_restart))
 
-# DM handlers (فقط برای Owner/Admin؛ اگر کاربر عادی بزند، نادیده گرفته می‌شود)
+# اعلان‌ها (فقط در دیتاسنتر و برای owner/admin)
+application.add_handler(CommandHandler("broadcast", cmd_broadcast))
+application.add_handler(CommandHandler("broadcast_all", cmd_broadcast_all))
 application.add_handler(CommandHandler("dm", cmd_dm))
-application.add_handler(CommandHandler("dmall", cmd_dmall))
 
 application.add_handler(CallbackQueryHandler(handle_level, pattern=r"^lvl_"))
 application.add_handler(CallbackQueryHandler(handle_callback))
@@ -1032,6 +1118,10 @@ async def lifespan(app: FastAPI):
     if WEBHOOK_URL:
         await application.bot.set_webhook(url=WEBHOOK_URL)
     await application.start()
+
+    # بازیابی از پیام پین‌شده (ROSTER + message_id)
+    await restore_from_pinned(application)
+
     yield
     await application.stop()
     await application.shutdown()
@@ -1047,4 +1137,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, DM enabled)."}
+    return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, pinned restore, admin broadcasts)."}
