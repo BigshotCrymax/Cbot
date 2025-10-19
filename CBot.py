@@ -57,7 +57,7 @@ DEFAULT_EVENTS = [
     {
         "id": "intro01",
         "title": "2nd Meeting!",
-        "when": "پنجشنبه ۱ آبان- ۱۸:۰۰",
+        "when": "چهارشنبه 30 مهر- ۱۸:۰۰",
         "price": "سفارش از کافه",
         "capacity": 12,
         "desc": "The legendary 2nd session. It's all gonna be about chill & chat. btw topic will be decided in the group. stay tuned!",
@@ -1138,3 +1138,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ChillChat bot is running (12h auto-approve, hidden capacity, male cap=5, pinned restore, admin broadcasts)."}
+
