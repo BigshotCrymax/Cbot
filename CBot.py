@@ -462,13 +462,18 @@ async def handle_message(update,context):
     if step=="name":
         if 2<=len(text)<=60: context.user_data["name"]=text; return await render_gender(update,context)
         else: return await update.message.reply_text("لطفاً نام معتبر وارد کن (۲ تا ۶۰ کاراکتر).")
-    if step=="age":
-        if text in ["-","—"]: context.user_data["age"]=None
-        else:
-            if not re.fullmatch(r"\d{1,3}",text): return await update.message.reply_text("سن را به عدد وارد کن (مثلاً 23) یا «ترجیح می‌دهم نگویم».")
-            a=int(text); if not (1<=a<=120): return await update.message.reply_text("سن نامعتبر است (1..120).")
-            context.user_data["age"]=a
-        return await render_level(update,context)
+    if step == "age":
+    if text in ["-", "—"]:
+        context.user_data["age"] = None
+    else:
+        if not re.fullmatch(r"\d{1,3}", text):
+            return await update.message.reply_text("سن را به عدد وارد کن (مثلاً 23) یا «ترجیح می‌دهم نگویم».")
+        a = int(text)
+        if not (1 <= a <= 120):
+            return await update.message.reply_text("سن نامعتبر است (1..120).")
+        context.user_data["age"] = a
+    return await render_level(update, context)
+
     if step=="level": return await render_level(update,context)
     if step=="phone":
         context.user_data["phone"]=text; await update.message.reply_text("شماره دریافت شد ✅",reply_markup=reply_main); return await render_note(update,context)
@@ -521,3 +526,4 @@ async def webhook(request:Request):
 @app.get("/")
 async def root():
     return {"status":"ChillChat bot is running (compact, pinned restore, roster & ALL_USERS, admin DMs)."}
+
