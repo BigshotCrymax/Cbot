@@ -1,4 +1,4 @@
-# CBot.py — ChillChat Bot (two datacenters: roster & all_users + cancel register + paged users list)
+# CBot.py — ChillChat Bot (roster@DC1 unchanged, improved all_users@DC2: no redundant edits)
 # python-telegram-bot==20.3, fastapi, uvicorn
 # Python 3.13 compatible (no JobQueue)
 
@@ -6,6 +6,7 @@ import os, json, re, asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton as B, InlineKeyboardMarkup as MK, ReplyKeyboardMarkup, KeyboardButton, Chat
+from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 # =========================
@@ -15,7 +16,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))                         # گروه ادمین/دیتاسنتر تاییدها
-DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))   # لیست تاییدشده‌ها (ROSTER)
+DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))   # لیست تاییدشده‌ها (ROSTER) — بدون تغییر
 DATACENTER2_CHAT_ID = int(os.environ.get("DATACENTER2_CHAT_ID", "0"))             # لیست همه‌ی کاربران (ALL_USERS)
 
 SUPPORT_USERNAME = (os.environ.get("SUPPORT_USERNAME") or "ifyoulostme").lstrip("@")
@@ -59,11 +60,15 @@ PENDING = {}          # user_chat_id -> info
 ROSTER = {}           # event_id -> list[ {chat_id,name,username,phone,gender,age,when,event_title} ]
 ALL_USERS = {}        # chat_id -> { id, chat_id, username, name }
 
-ROSTER_MESSAGE_ID = None           # pinned (single) in DATACENTER_CHAT_ID
-USERS_MESSAGE_ID = None            # first page (pinned) in DATACENTER2_CHAT_ID
-USERS_PAGE_MESSAGE_IDS = []        # subsequent pages (not pinned)
+# DC1 (روستر) — بدون تغییر
+ROSTER_MESSAGE_ID = None
 
-TELEGRAM_TEXT_LIMIT = 4000         # safe margin for 4096
+# DC2 (همه کاربران) — بهینه‌شده
+USERS_MESSAGE_ID = None            # صفحه اول (پین‌شده)
+USERS_PAGE_MESSAGE_IDS = []        # صفحات بعدی
+USERS_PAGE_TEXTS = []              # کش متن هر صفحه برای جلوگیری از ادیت بی‌دلیل
+
+TELEGRAM_TEXT_LIMIT = 4000         # حاشیه امن (حد واقعی 4096)
 
 # =========================
 #          TEXTS
@@ -135,7 +140,7 @@ def _extract_json(text):
     except: return None
 
 # =========================
-#  PINNED (Roster @ DC1) + (AllUsers @ DC2 with paging)
+#    PINNED — DC1 (Roster)  [بدون تغییر]
 # =========================
 def _human_roster():
     if not ROSTER: return "📋 لیست تاییدشده‌ها (DataCenter #1)\n— هنوز کسی تایید نشده."
@@ -151,6 +156,47 @@ def _human_roster():
                 L.append(f"  {i}. {r['name']} | {uname} | {r.get('phone','—')}")
     return "\n".join(L)
 
+async def save_roster_pinned(app):
+    """ذخیره/ویرایش لیست تاییدشده‌ها در DC1 (بدون تغییرات رفتاری)."""
+    global ROSTER_MESSAGE_ID
+    if not DATACENTER_CHAT_ID: return
+    human = _human_roster()
+    if SHOW_JSON_IN_PINNED:
+        human += "\n\n---\n```json\n" + json.dumps(
+            {"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS],
+             "roster":ROSTER},
+            ensure_ascii=False
+        ) + "\n```"
+    try:
+        if ROSTER_MESSAGE_ID:
+            await app.bot.edit_message_text(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, text=human)
+            return
+    except Exception as e:
+        print("edit roster pinned failed:", e)
+    m = await app.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=human)
+    ROSTER_MESSAGE_ID = m.message_id
+    try:
+        await app.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
+    except Exception as e:
+        print("pin roster failed:", e)
+
+async def restore_roster_from_pinned(app):
+    """Restore roster/message_id from DATACENTER_CHAT_ID."""
+    global ROSTER_MESSAGE_ID, ROSTER
+    if not DATACENTER_CHAT_ID: return
+    try: chat: Chat = await app.bot.get_chat(DATACENTER_CHAT_ID)
+    except Exception as e:
+        print("restore roster get_chat:", e); return
+    pm = getattr(chat, "pinned_message", None)
+    if not pm: return
+    data = _extract_json(getattr(pm, "text", None) or getattr(pm, "caption", None))
+    if data and isinstance(data.get("roster"), dict):
+        ROSTER = data["roster"]
+    ROSTER_MESSAGE_ID = pm.message_id
+
+# =========================
+#    PINNED — DC2 (All Users)  [بهینه‌شده]
+# =========================
 def _lines_for_users():
     """بساز خطوط لیست کاربران با شماره‌گذاری پیوسته، عدم تگ‌کردن ادمین‌ها."""
     lines = []
@@ -185,93 +231,79 @@ def _human_users_pages():
         pages[0] += "\n\n---\n```json\n" + json.dumps({"all_users": {str(cid): ALL_USERS[cid] for cid in ALL_USERS}}, ensure_ascii=False) + "\n```"
     return pages
 
-async def save_roster_pinned(app):
-    """Save roster to DATACENTER_CHAT_ID pinned."""
-    global ROSTER_MESSAGE_ID
-    if not DATACENTER_CHAT_ID: return
-    human = _human_roster()
-    if SHOW_JSON_IN_PINNED:
-        human += "\n\n---\n```json\n" + json.dumps(
-            {"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS],
-             "roster":ROSTER},
-            ensure_ascii=False
-        ) + "\n```"
+async def _safe_edit(bot, chat_id: int, message_id: int, new_text: str, old_text: str|None):
+    """ادیت فقط وقتی لازم است؛ و خطای 'message is not modified' را بی‌صدا نادیده می‌گیرد."""
+    if old_text is not None and old_text == new_text:
+        return False  # نیازی به ادیت نیست
     try:
-        if ROSTER_MESSAGE_ID:
-            await app.bot.edit_message_text(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, text=human)
-            return
+        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text)
+        return True
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return False
+        # سایر BadRequestها را فقط لاگ کن
+        print("edit failed:", e)
+        return False
     except Exception as e:
-        print("edit roster pinned failed:", e)
-    m = await app.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=human)
-    ROSTER_MESSAGE_ID = m.message_id
-    try:
-        await app.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
-    except Exception as e:
-        print("pin roster failed:", e)
+        print("edit failed (generic):", e)
+        return False
 
 async def save_users_pinned(app):
-    """Save all users to DATACENTER2_CHAT_ID with paging; first page pinned, others edited/extended."""
-    global USERS_MESSAGE_ID, USERS_PAGE_MESSAGE_IDS
+    """Save all users to DATACENTER2_CHAT_ID با صفحه‌بندی و حذف ادیت‌های اضافی."""
+    global USERS_MESSAGE_ID, USERS_PAGE_MESSAGE_IDS, USERS_PAGE_TEXTS
     if not DATACENTER2_CHAT_ID: return
+
     pages = _human_users_pages()
     if not pages:
         pages = ["👥 همهٔ کاربران (DataCenter #2)\n— هنوز کسی بات را استارت نکرده."]
 
-    # صفحه اول: همیشه ویرایش؛ اگر نداریم، بساز و پین کن
-    try:
-        if USERS_MESSAGE_ID:
-            await app.bot.edit_message_text(chat_id=DATACENTER2_CHAT_ID, message_id=USERS_MESSAGE_ID, text=pages[0])
-        else:
-            m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[0])
-            USERS_MESSAGE_ID = m.message_id
-            try:
-                await app.bot.pin_chat_message(chat_id=DATACENTER2_CHAT_ID, message_id=USERS_MESSAGE_ID, disable_notification=True)
-            except Exception as e:
-                print("pin users first page failed:", e)
-    except Exception as e:
-        print("edit users first page failed:", e)
-        # اگر ادیت نشد، پیام جدید بساز (نهایتاً یک‌بار)
+    # اطمینان از اندازه کش
+    while len(USERS_PAGE_TEXTS) < len(pages):
+        USERS_PAGE_TEXTS.append(None)
+
+    # صفحه اول: ادیت فقط اگر متن عوض شده
+    if USERS_MESSAGE_ID:
+        changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, USERS_MESSAGE_ID, pages[0], USERS_PAGE_TEXTS[0])
+        if changed or USERS_PAGE_TEXTS[0] is None:
+            USERS_PAGE_TEXTS[0] = pages[0]
+    else:
         m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[0])
         USERS_MESSAGE_ID = m.message_id
+        USERS_PAGE_TEXTS[0] = pages[0]
         try:
             await app.bot.pin_chat_message(chat_id=DATACENTER2_CHAT_ID, message_id=USERS_MESSAGE_ID, disable_notification=True)
-        except Exception as e2:
-            print("pin users first page (fallback) failed:", e2)
+        except Exception as e:
+            print("pin users first page failed:", e)
 
-    # صفحات بعدی: تعداد را با pages هم‌تراز کن
-    needed = max(0, len(pages)-1)
+    # صفحات بعدی: ادیت/ایجاد فقط اگر متن عوض شده
+    needed = max(0, len(pages) - 1)
+
     # ادیت صفحات موجود
     for i in range(min(needed, len(USERS_PAGE_MESSAGE_IDS))):
         mid = USERS_PAGE_MESSAGE_IDS[i]
-        try:
-            await app.bot.edit_message_text(chat_id=DATACENTER2_CHAT_ID, message_id=mid, text=pages[i+1])
-        except Exception as e:
-            print(f"edit users page {i+2} failed:", e)
-    # اگر صفحات بیشتری لازم است، بساز
+        changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, mid, pages[i+1], USERS_PAGE_TEXTS[i+1])
+        if changed or USERS_PAGE_TEXTS[i+1] is None:
+            USERS_PAGE_TEXTS[i+1] = pages[i+1]
+
+    # ساخت صفحات جدید در صورت نیاز
     if needed > len(USERS_PAGE_MESSAGE_IDS):
         for i in range(len(USERS_PAGE_MESSAGE_IDS), needed):
             m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[i+1])
             USERS_PAGE_MESSAGE_IDS.append(m.message_id)
-    # اگر صفحات اضافی موجود بود و الان لازم نیست، فعلاً نگه می‌داریم (برای سادگی و جلوگیری از حذف ناخواسته)
+            if len(USERS_PAGE_TEXTS) <= i+1:
+                USERS_PAGE_TEXTS.append(None)
+            USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
-async def restore_roster_from_pinned(app):
-    """Restore roster/message_id from DATACENTER_CHAT_ID."""
-    global ROSTER_MESSAGE_ID, ROSTER
-    if not DATACENTER_CHAT_ID: return
-    try: chat: Chat = await app.bot.get_chat(DATACENTER_CHAT_ID)
-    except Exception as e:
-        print("restore roster get_chat:", e); return
-    pm = getattr(chat, "pinned_message", None)
-    if not pm: return
-    data = _extract_json(getattr(pm, "text", None) or getattr(pm, "caption", None))
-    if data and isinstance(data.get("roster"), dict):
-        ROSTER = data["roster"]
-    ROSTER_MESSAGE_ID = pm.message_id
+    # اگر صفحات کمتر شد، کش را کوتاه کن (پیام‌های اضافه را دست نمی‌زنیم)
+    if len(USERS_PAGE_TEXTS) > len(pages):
+        USERS_PAGE_TEXTS = USERS_PAGE_TEXTS[:len(pages)]
 
 async def restore_users_from_pinned(app):
-    """Restore all_users/message_id (first page pinned) from DATACENTER2_CHAT_ID."""
-    global USERS_MESSAGE_ID, ALL_USERS, USERS_PAGE_MESSAGE_IDS
-    USERS_PAGE_MESSAGE_IDS = []  # صفحات بعدی بعداً دوباره ساخته می‌شن
+    """Restore all_users/message_id (first page pinned) from DATACENTER2_CHAT_ID.
+       کش متن‌ها خالی می‌ماند تا اولین save دوباره بسازد."""
+    global USERS_MESSAGE_ID, ALL_USERS, USERS_PAGE_MESSAGE_IDS, USERS_PAGE_TEXTS
+    USERS_PAGE_MESSAGE_IDS = []
+    USERS_PAGE_TEXTS = []
     if not DATACENTER2_CHAT_ID: return
     try: chat: Chat = await app.bot.get_chat(DATACENTER2_CHAT_ID)
     except Exception as e:
@@ -292,6 +324,7 @@ async def restore_users_from_pinned(app):
                 "name": v.get("name"),
             }
     USERS_MESSAGE_ID = pm.message_id
+    # صفحات بعدی پس از اولین ذخیره دوباره ساخته/ادیت می‌شوند
 
 # =========================
 #          UI
@@ -322,7 +355,7 @@ def age_inline():
     return MK([[B("➖ ترجیح می‌دهم نگویم", callback_data="age_na")],[B("↩️ بازگشت به مرحله قبل", callback_data="back_step")]])
 
 def event_inline(ev_id):
-    # دکمه ثبت‌نام + لغو ثبت‌نام (همیشه نمایش داده می‌شود)
+    # ثبت‌نام + لغو ثبت‌نام
     return MK([
         [B("📝 ثبت‌نام در همین رویداد", callback_data=f"register_{ev_id}")],
         [B("❌ لغو ثبت‌نام", callback_data=f"cancel_{ev_id}")],
@@ -428,8 +461,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
 
 async def cmd_testpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await save_roster_pinned(context.application)
-    await save_users_pinned(context.application)
+    await save_roster_pinned(context.application)   # DC1 بدون تغییر
+    await save_users_pinned(context.application)    # DC2 بهینه‌شده
     await update.message.reply_text("✅ هر دو لیست ساخته/آپدیت و پین شد.")
 
 async def cmd_roster(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -552,22 +585,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ev_id = data.split("_",1)[1]
             ev = get_event(ev_id)
             if not ev: return await q.answer("رویداد پیدا نشد.", show_alert=True)
-            # نمایش تایید
             return await q.edit_message_text(
                 f"آیا مطمئن هستی ثبت‌نامت در «{ev.get('title','')}» لغو شود؟",
                 reply_markup=event_inline_confirm_cancel(ev_id)
             )
         if data == "cancel_no":
-            # بازگشت به لیست رویدادها یا خانه
             return await render_event_list(update)
         if data.startswith("cancel_yes_"):
             ev_id = data.split("_",2)[2] if data.startswith("cancel_yes__") else data.split("_",2)[1]
             ev = get_event(ev_id)
-            # حذف کاربر از ROSTER ایونت
-            user_chat_id = update.effective_user.id if update.effective_user else None
-            if user_chat_id is None:
-                return await q.answer("شناسه کاربر نامعتبر.", show_alert=True)
-            user_chat_id = update.effective_chat.id  # chat_id لازم است
+            user_chat_id = update.effective_chat.id
             lst = ROSTER.get(ev_id, [])
             new_lst = [r for r in lst if r.get("chat_id") != user_chat_id]
             removed = len(lst) - len(new_lst)
@@ -848,8 +875,8 @@ async def lifespan(app: FastAPI):
     if WEBHOOK_URL: await application.bot.set_webhook(url=WEBHOOK_URL)
     await application.start()
     # بازیابی از هر دو دیتاسنتر
-    await restore_roster_from_pinned(application)
-    await restore_users_from_pinned(application)
+    await restore_roster_from_pinned(application)  # DC1
+    await restore_users_from_pinned(application)   # DC2
     yield
     await application.stop(); await application.shutdown()
 
@@ -864,4 +891,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status":"ChillChat bot running (roster@DC1, all_users@DC2, cancel register, paged users, no jobqueue)."}
+    return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, no jobqueue)."}
