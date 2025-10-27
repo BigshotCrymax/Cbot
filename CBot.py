@@ -33,25 +33,34 @@ AUTO_APPROVE_DELAY = int(os.environ.get("AUTO_APPROVE_DELAY", str(12*60*60)))
 SHOW_JSON_IN_PINNED = os.environ.get("SHOW_JSON_IN_PINNED", "1") == "1"
 MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 
+# =========================
+#       EVENTS (ENV or default)
+# =========================
 DEFAULT_EVENTS = [
     {
-        "id": "talk002",
-        "title": "Do humans need religion to live a meaningful life?",
-        "when": "چهارشنبه 30 مهر - 16:30",
+        "id": "talk003",
+        "title": "Do we fall in love with similarity or difference?",
+        "when": "پنجشنبه 8 آبان - 16:30",
         "place": "Dorna Cafe",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "Chill & Chat! Topic decided in group.",
+        "desc": "ometimes we fall for those who mirror us,\nsometimes for those who complete what we lack.\nWhat kind of love do we truly seek?"
     }
 ]
 try:
-    EVENTS = json.loads(os.environ.get("EVENTS_JSON", "") or "[]") or DEFAULT_EVENTS
-    if not isinstance(EVENTS, list): EVENTS = DEFAULT_EVENTS
-except: EVENTS = DEFAULT_EVENTS
+    EVENTS = json.loads(os.environ.get("EVENTS_JSON", "") or "[]")
+    if not isinstance(EVENTS, list):
+        EVENTS = DEFAULT_EVENTS
+except:
+    EVENTS = DEFAULT_EVENTS
+if EVENTS == []:
+    # نمایش خالی مجاز است؛ فقط برای دسترسی‌های دیگر هم لیست معتبر بماند
+    EVENTS = []
 
 try:
     MEETUP_LINKS = json.loads(os.environ.get("MEETUP_LINKS_JSON", "{}"))
-except: MEETUP_LINKS = {}
+except:
+    MEETUP_LINKS = {}
 
 # =========================
 #     IN-MEMORY STORAGE
@@ -241,7 +250,6 @@ async def _safe_edit(bot, chat_id: int, message_id: int, new_text: str, old_text
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             return False
-        # سایر BadRequestها را فقط لاگ کن
         print("edit failed:", e)
         return False
     except Exception as e:
@@ -257,11 +265,10 @@ async def save_users_pinned(app):
     if not pages:
         pages = ["👥 همهٔ کاربران (DataCenter #2)\n— هنوز کسی بات را استارت نکرده."]
 
-    # اطمینان از اندازه کش
     while len(USERS_PAGE_TEXTS) < len(pages):
         USERS_PAGE_TEXTS.append(None)
 
-    # صفحه اول: ادیت فقط اگر متن عوض شده
+    # صفحه اول
     if USERS_MESSAGE_ID:
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, USERS_MESSAGE_ID, pages[0], USERS_PAGE_TEXTS[0])
         if changed or USERS_PAGE_TEXTS[0] is None:
@@ -275,17 +282,15 @@ async def save_users_pinned(app):
         except Exception as e:
             print("pin users first page failed:", e)
 
-    # صفحات بعدی: ادیت/ایجاد فقط اگر متن عوض شده
+    # صفحات بعدی (ادیت/ایجاد در صورت نیاز)
     needed = max(0, len(pages) - 1)
 
-    # ادیت صفحات موجود
     for i in range(min(needed, len(USERS_PAGE_MESSAGE_IDS))):
         mid = USERS_PAGE_MESSAGE_IDS[i]
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, mid, pages[i+1], USERS_PAGE_TEXTS[i+1])
         if changed or USERS_PAGE_TEXTS[i+1] is None:
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
-    # ساخت صفحات جدید در صورت نیاز
     if needed > len(USERS_PAGE_MESSAGE_IDS):
         for i in range(len(USERS_PAGE_MESSAGE_IDS), needed):
             m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[i+1])
@@ -294,13 +299,11 @@ async def save_users_pinned(app):
                 USERS_PAGE_TEXTS.append(None)
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
-    # اگر صفحات کمتر شد، کش را کوتاه کن (پیام‌های اضافه را دست نمی‌زنیم)
     if len(USERS_PAGE_TEXTS) > len(pages):
         USERS_PAGE_TEXTS = USERS_PAGE_TEXTS[:len(pages)]
 
 async def restore_users_from_pinned(app):
-    """Restore all_users/message_id (first page pinned) from DATACENTER2_CHAT_ID.
-       کش متن‌ها خالی می‌ماند تا اولین save دوباره بسازد."""
+    """Restore all_users/message_id (first page pinned) from DATACENTER2_CHAT_ID."""
     global USERS_MESSAGE_ID, ALL_USERS, USERS_PAGE_MESSAGE_IDS, USERS_PAGE_TEXTS
     USERS_PAGE_MESSAGE_IDS = []
     USERS_PAGE_TEXTS = []
@@ -324,7 +327,6 @@ async def restore_users_from_pinned(app):
                 "name": v.get("name"),
             }
     USERS_MESSAGE_ID = pm.message_id
-    # صفحات بعدی پس از اولین ذخیره دوباره ساخته/ادیت می‌شوند
 
 # =========================
 #          UI
@@ -384,12 +386,17 @@ async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=F
         if update.message:
             await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=reply_main)
             await update.message.reply_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
-        elif update.callback_query:
+            return
+        if update.callback_query:
             await update.callback_query.edit_message_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
 
 async def render_event_list(update: Update):
-    # فقط title روی دکمه‌ها
-    rows = [[B(f"{e['title']}", callback_data=f"event_{e['id']}")] for e in EVENTS]
+    if not EVENTS:
+        return await update.callback_query.edit_message_text(
+            "فعلاً رویدادی نداریم 👀",
+            reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]])
+        )
+    rows = [[B(f"{e['title']}", callback_data=f"event_{e['id']}")] for e in EVENTS]  # فقط title
     rows.append([B("↩️ بازگشت", callback_data="back_home")])
     await update.callback_query.edit_message_text("رویدادهای پیش‌رو:", reply_markup=MK(rows))
 
@@ -479,13 +486,11 @@ async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not m: return await update.message.reply_text("فرمت: /dm @username پیام")
     target, msg = m.group(1), m.group(2).strip()
     chat_id = None
-    # از ROSTER
     for ppl in ROSTER.values():
         for r in ppl:
             if (r.get("username") or "").lower() == target.lower():
                 chat_id = r.get("chat_id"); break
         if chat_id: break
-    # از ALL_USERS
     if not chat_id:
         for cid, info in ALL_USERS.items():
             if (info.get("username") or "").lower() == target.lower():
@@ -539,7 +544,6 @@ async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; data = q.data
     await q.answer()
-    # ثبت کاربر و آپدیت دیتاسنتر۲
     add_user(q.from_user, q.message.chat.id if q.message else update.effective_chat.id)
     await save_users_pinned(context.application)
 
@@ -592,7 +596,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "cancel_no":
             return await render_event_list(update)
         if data.startswith("cancel_yes_"):
-            ev_id = data.split("_",2)[2] if data.startswith("cancel_yes__") else data.split("_",2)[1]
+            ev_id = data.split("_",2)[-1]  # استخراج تمیز آیدی
             ev = get_event(ev_id)
             user_chat_id = update.effective_chat.id
             lst = ROSTER.get(ev_id, [])
@@ -748,7 +752,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = context.user_data
     ev_id = u.get("selected_event_id") or (EVENTS[0]["id"] if EVENTS else None)
-    ev = get_event(ev_id)
+    ev = get_event(ev_id) if ev_id else None
 
     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
         await update.effective_chat.send_message(CAPACITY_CANCEL_MSG, reply_markup=reply_main)
