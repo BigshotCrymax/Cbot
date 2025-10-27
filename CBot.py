@@ -44,7 +44,7 @@ DEFAULT_EVENTS = [
         "place": "Dorna Cafe",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "ometimes we fall for those who mirror us,\nsometimes for those who complete what we lack.\nWhat kind of love do we truly seek?"
+        "desc": "Sometimes we fall for those who mirror us,\nSometimes for those who complete what we lack.\nWhat kind of love do we truly seek?"
     }
 ]
 try:
@@ -896,3 +896,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, no jobqueue)."}
+
