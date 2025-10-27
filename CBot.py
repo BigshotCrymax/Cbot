@@ -1,4 +1,4 @@
-# CBot.py — ChillChat Bot (roster@DC1 unchanged, improved all_users@DC2: no redundant edits)
+# CBot.py — ChillChat Bot (roster@DC1 unchanged, DC2 optimized, safe edits, EVENTS_JSON CSV/JSON)
 # python-telegram-bot==20.3, fastapi, uvicorn
 # Python 3.13 compatible (no JobQueue)
 
@@ -33,52 +33,54 @@ AUTO_APPROVE_DELAY = int(os.environ.get("AUTO_APPROVE_DELAY", str(12*60*60)))
 SHOW_JSON_IN_PINNED = os.environ.get("SHOW_JSON_IN_PINNED", "1") == "1"
 MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 
-# =========================
-#       EVENTS (ENV or default)
-# =========================
-KNOWN_EVENTS = {
-    "talk002": {
+# ---- Default & Preset events
+DEFAULT_EVENTS = [
+    {
         "id": "talk002",
         "title": "Do humans need religion to live a meaningful life?",
         "when": "چهارشنبه 30 مهر - 16:30",
         "place": "Dorna Cafe",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "A warm philosophical conversation on whether meaning in life needs religion."
+        "desc": "Chill & Chat! Topic decided in group.",
     },
-    "talk003": {
+    {
         "id": "talk003",
         "title": "Do we fall in love with similarity or difference?",
         "when": "پنجشنبه 8 آبان - 16:30",
         "place": "Dorna Cafe",
         "price": "سفارش از کافه",
         "capacity": 12,
-        "desc": "Sometimes we fall for those who mirror us,\nSometimes for those who complete what we lack.\nWhat kind of love do we truly seek?"
-    }
-}
+        "desc": "Sometimes we fall for those who mirror us,\n"
+                "sometimes for those who complete what we lack.\n"
+                "What kind of love do we truly seek?",
+    },
+]
+# Map for ID -> object (برای حالت CSV)
+_PRESET_EVENTS = {e["id"]: e for e in DEFAULT_EVENTS}
 
-# مقدار خام از ENV
-raw_events = os.environ.get("EVENTS_JSON", "").strip()
+def _load_events_from_env() -> list:
+    raw = os.environ.get("EVENTS_JSON", "").strip()
+    if not raw:
+        return DEFAULT_EVENTS
+    # اگر JSON واقعی است (با [ شروع می‌شود)
+    if raw.lstrip().startswith("["):
+        try:
+            arr = json.loads(raw)
+            return arr if isinstance(arr, list) else DEFAULT_EVENTS
+        except:
+            return DEFAULT_EVENTS
+    # در غیراینصورت CSV از IDها مثل: "talk003, talk002"
+    ids = [x.strip() for x in raw.split(",") if x.strip()]
+    evs = [_PRESET_EVENTS[i] for i in ids if i in _PRESET_EVENTS]
+    return evs  # ممکن است خالی برگردد => یعنی هیچ رویدادی نمایش داده نشود
 
-# تعیین EVENTS
-if not raw_events:
-    # خالی → پیش‌فرض talk003
-    EVENTS = [KNOWN_EVENTS["talk003"]]
-elif raw_events.startswith("["):
-    # JSON لیست کلاسیک
-    try:
-        EVENTS = json.loads(raw_events)
-        if not isinstance(EVENTS, list):
-            EVENTS = [KNOWN_EVENTS["talk003"]]
-    except:
-        EVENTS = [KNOWN_EVENTS["talk003"]]
-else:
-    # فقط ID رو داده مثلاً talk003
-    chosen = raw_events.lower()
-    if chosen in KNOWN_EVENTS:
-        EVENTS = [KNOWN_EVENTS[chosen]]
-    else:
-        EVENTS = [KNOWN_EVENTS["talk003"]]
+EVENTS = _load_events_from_env()
+
+try:
+    MEETUP_LINKS = json.loads(os.environ.get("MEETUP_LINKS_JSON", "{}"))
+except: MEETUP_LINKS = {}
+
 # =========================
 #     IN-MEMORY STORAGE
 # =========================
@@ -123,6 +125,18 @@ def SOCIAL_TEXT():
         + (f"📸 [اینستاگرام]({INSTAGRAM_URL})\n" if INSTAGRAM_URL else "")
         + ("" if (CHANNEL_URL or GROUP_URL or INSTAGRAM_URL) else "(به‌زودی تکمیل می‌شود)")
     )
+
+# =========================
+#     SAFE EDIT HELPERS
+# =========================
+async def safe_q_edit(q, text, **kwargs):
+    """Edit message but ignore 'message is not modified'."""
+    try:
+        await q.edit_message_text(text, **kwargs)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        raise
 
 # =========================
 #          HELPERS
@@ -282,10 +296,11 @@ async def save_users_pinned(app):
     if not pages:
         pages = ["👥 همهٔ کاربران (DataCenter #2)\n— هنوز کسی بات را استارت نکرده."]
 
+    # اطمینان از اندازه کش
     while len(USERS_PAGE_TEXTS) < len(pages):
         USERS_PAGE_TEXTS.append(None)
 
-    # صفحه اول
+    # صفحه اول: ادیت فقط اگر متن عوض شده
     if USERS_MESSAGE_ID:
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, USERS_MESSAGE_ID, pages[0], USERS_PAGE_TEXTS[0])
         if changed or USERS_PAGE_TEXTS[0] is None:
@@ -299,15 +314,17 @@ async def save_users_pinned(app):
         except Exception as e:
             print("pin users first page failed:", e)
 
-    # صفحات بعدی (ادیت/ایجاد در صورت نیاز)
+    # صفحات بعدی: ادیت/ایجاد فقط اگر متن عوض شده
     needed = max(0, len(pages) - 1)
 
+    # ادیت صفحات موجود
     for i in range(min(needed, len(USERS_PAGE_MESSAGE_IDS))):
         mid = USERS_PAGE_MESSAGE_IDS[i]
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, mid, pages[i+1], USERS_PAGE_TEXTS[i+1])
         if changed or USERS_PAGE_TEXTS[i+1] is None:
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
+    # ساخت صفحات جدید در صورت نیاز
     if needed > len(USERS_PAGE_MESSAGE_IDS):
         for i in range(len(USERS_PAGE_MESSAGE_IDS), needed):
             m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[i+1])
@@ -316,6 +333,7 @@ async def save_users_pinned(app):
                 USERS_PAGE_TEXTS.append(None)
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
+    # اگر صفحات کمتر شد، کش را کوتاه کن (پیام‌های اضافه را دست نمی‌زنیم)
     if len(USERS_PAGE_TEXTS) > len(pages):
         USERS_PAGE_TEXTS = USERS_PAGE_TEXTS[:len(pages)]
 
@@ -398,54 +416,50 @@ def clear_flow(ctx):
 async def render_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     clear_flow(context)
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
+        await safe_q_edit(update.callback_query, "یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
     else:
         if update.message:
             await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=reply_main)
             await update.message.reply_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
-            return
-        if update.callback_query:
-            await update.callback_query.edit_message_text("یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
+        elif update.callback_query:
+            await safe_q_edit(update.callback_query, "یکی از گزینه‌ها رو انتخاب کن:", reply_markup=build_main_menu())
 
 async def render_event_list(update: Update):
     if not EVENTS:
-        return await update.callback_query.edit_message_text(
-            "فعلاً رویدادی نداریم 👀",
-            reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]])
-        )
-    rows = [[B(f"{e['title']}", callback_data=f"event_{e['id']}")] for e in EVENTS]  # فقط title
+        return await safe_q_edit(update.callback_query, "فعلاً رویدادی وجود ندارد.", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+    rows = [[B(f"{e['title']}", callback_data=f"event_{e['id']}")] for e in EVENTS]
     rows.append([B("↩️ بازگشت", callback_data="back_home")])
-    await update.callback_query.edit_message_text("رویدادهای پیش‌رو:", reply_markup=MK(rows))
+    await safe_q_edit(update.callback_query, "رویدادهای پیش‌رو:", reply_markup=MK(rows))
 
 async def render_event_detail(update: Update, ev):
-    await update.callback_query.edit_message_text(event_text_user(ev), parse_mode="Markdown", reply_markup=event_inline(ev["id"]))
+    await safe_q_edit(update.callback_query, event_text_user(ev), parse_mode="Markdown", reply_markup=event_inline(ev["id"]))
 
 async def render_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     push_step(context, "rules")
-    if update.callback_query: await update.callback_query.edit_message_text(RULES, reply_markup=rules_inline())
+    if update.callback_query: await safe_q_edit(update.callback_query, RULES, reply_markup=rules_inline())
     else: await update.message.reply_text(RULES, reply_markup=rules_inline())
 
 async def render_name(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "name")
     txt = "لطفاً *نام و نام خانوادگی* رو وارد کن:"
-    if edit and update.callback_query: await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back_inline())
+    if edit and update.callback_query: await safe_q_edit(update.callback_query, txt, parse_mode="Markdown", reply_markup=back_inline())
     else: await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=back_inline())
 
 async def render_gender(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "gender")
     txt = "جنسیتت رو انتخاب کن:"
-    if update.callback_query and edit: await update.callback_query.edit_message_text(txt, reply_markup=gender_inline())
+    if update.callback_query and edit: await safe_q_edit(update.callback_query, txt, reply_markup=gender_inline())
     else: await update.effective_chat.send_message(txt, reply_markup=gender_inline())
 
 async def render_age(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "age")
     txt = "سن‌ت رو به *عدد* بفرست (مثلاً 24). یا «ترجیح می‌دهم نگویم»."
-    if update.callback_query and edit: await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=age_inline())
+    if update.callback_query and edit: await safe_q_edit(update.callback_query, txt, parse_mode="Markdown", reply_markup=age_inline())
     else: await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=age_inline())
 
 async def render_level(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "level")
-    if update.callback_query and edit: await update.callback_query.edit_message_text("سطح زبانت؟", reply_markup=level_inline())
+    if update.callback_query and edit: await safe_q_edit(update.callback_query, "سطح زبانت؟", reply_markup=level_inline())
     else: await update.effective_chat.send_message("سطح زبانت؟", reply_markup=level_inline())
 
 async def render_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -457,7 +471,7 @@ async def render_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def render_note(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     push_step(context, "note")
     txt = "یادداشت/نیاز خاص داری؟ (اختیاری) اگر چیزی نداری، فقط «-» بفرست."
-    if update.callback_query and edit: await update.callback_query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back_inline())
+    if update.callback_query and edit: await safe_q_edit(update.callback_query, txt, parse_mode="Markdown", reply_markup=back_inline())
     else: await update.effective_chat.send_message(txt, parse_mode="Markdown", reply_markup=back_inline())
 
 async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -503,11 +517,13 @@ async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not m: return await update.message.reply_text("فرمت: /dm @username پیام")
     target, msg = m.group(1), m.group(2).strip()
     chat_id = None
+    # از ROSTER
     for ppl in ROSTER.values():
         for r in ppl:
             if (r.get("username") or "").lower() == target.lower():
                 chat_id = r.get("chat_id"); break
         if chat_id: break
+    # از ALL_USERS
     if not chat_id:
         for cid, info in ALL_USERS.items():
             if (info.get("username") or "").lower() == target.lower():
@@ -561,19 +577,20 @@ async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; data = q.data
     await q.answer()
+    # ثبت کاربر و آپدیت دیتاسنتر۲
     add_user(q.from_user, q.message.chat.id if q.message else update.effective_chat.id)
     await save_users_pinned(context.application)
 
     if data == "back_home": return await render_home(update, context, edit=True)
     if data == "back_step": return await go_back(update, context)
-    if data == "faq":      return await q.edit_message_text(FAQ, parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
-    if data == "support":  return await q.edit_message_text(f"🆘 پشتیبانی: @{SUPPORT_USERNAME}", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
-    if data == "cafe_intro": return await q.edit_message_text(CAFE_INTRO_TEXT, parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
-    if data == "socials":  return await q.edit_message_text(SOCIAL_TEXT(), parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+    if data == "faq":      return await safe_q_edit(q, FAQ, parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+    if data == "support":  return await safe_q_edit(q, f"🆘 پشتیبانی: @{SUPPORT_USERNAME}", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+    if data == "cafe_intro": return await safe_q_edit(q, CAFE_INTRO_TEXT, parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+    if data == "socials":  return await safe_q_edit(q, SOCIAL_TEXT(), parse_mode="Markdown", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "feedback_start":
         context.user_data["feedback_mode"] = True
-        return await q.edit_message_text("📝 نظرت رو بنویس و بفرست. پیامت مستقیم به تیم میره 💌", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+        return await safe_q_edit(q, "📝 نظرت رو بنویس و بفرست. پیامت مستقیم به تیم میره 💌", reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
 
     if data == "list_events": return await render_event_list(update)
     if data.startswith("event_"):
@@ -595,7 +612,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_ev and context.user_data.get("selected_event_id"):
             target_ev = get_event(context.user_data["selected_event_id"])
         if target_ev and target_ev.get("capacity") and remaining_capacity(target_ev) <= 0:
-            return await q.edit_message_text(CAPACITY_FULL_PREVENT_MSG, reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
+            return await safe_q_edit(q, CAPACITY_FULL_PREVENT_MSG, reply_markup=MK([[B("↩️ بازگشت", callback_data="back_home")]]))
         return await render_rules(update, context)
 
     if data == "accept_rules": return await render_name(update, context, edit=True)
@@ -606,14 +623,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ev_id = data.split("_",1)[1]
             ev = get_event(ev_id)
             if not ev: return await q.answer("رویداد پیدا نشد.", show_alert=True)
-            return await q.edit_message_text(
+            return await safe_q_edit(
+                q,
                 f"آیا مطمئن هستی ثبت‌نامت در «{ev.get('title','')}» لغو شود؟",
                 reply_markup=event_inline_confirm_cancel(ev_id)
             )
         if data == "cancel_no":
             return await render_event_list(update)
         if data.startswith("cancel_yes_"):
-            ev_id = data.split("_",2)[-1]  # استخراج تمیز آیدی
+            # پشتیبانی هر دو قالب cancel_yes_x و cancel_yes__x
+            parts = data.split("_")
+            ev_id = parts[-1]
             ev = get_event(ev_id)
             user_chat_id = update.effective_chat.id
             lst = ROSTER.get(ev_id, [])
@@ -622,9 +642,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ROSTER[ev_id] = new_lst
             await save_roster_pinned(context.application)
             if removed:
-                await q.edit_message_text("✅ لغو ثبت‌نام شما انجام شد.")
+                await safe_q_edit(q, "✅ لغو ثبت‌نام شما انجام شد.")
             else:
-                await q.edit_message_text("موردی برای لغو یافت نشد (شما در لیست این رویداد نبودید).")
+                await safe_q_edit(q, "موردی برای لغو یافت نشد (شما در لیست این رویداد نبودید).")
             return
 
     # سطح/جنسیت/سن
@@ -645,13 +665,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ev = get_event(ev_id)
             if action == "approve" and ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
                 await q.answer("ظرفیت تکمیل است؛ امکان تایید نیست.", show_alert=True)
-                try: await q.edit_message_text((q.message.text or "") + "\n\n⚠️ ظرفیت تکمیل.")
+                try: await safe_q_edit(q, (q.message.text or "") + "\n\n⚠️ ظرفیت تکمیل.")
                 except: pass
                 return
             info_preview = PENDING.get(user_chat_id, {})
             if action == "approve" and info_preview.get("gender") == "male" and male_count(ev_id) >= MALE_LIMIT_PER_EVENT:
                 await q.answer("سقف آقایان تکمیل است؛ امکان تایید نیست.", show_alert=True)
-                try: await q.edit_message_text((q.message.text or "") + "\n\n⚠️ سقف آقایان تکمیل.")
+                try: await safe_q_edit(q, (q.message.text or "") + "\n\n⚠️ سقف آقایان تکمیل.")
                 except: pass
                 try: await context.bot.send_message(chat_id=user_chat_id, text=MALE_CAPACITY_FULL_MSG)
                 except: pass
@@ -670,7 +690,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(chat_id=user_chat_id, text=CAPACITY_CANCEL_MSG)
 
-            try: await q.edit_message_text((q.message.text or "") + "\n\n" + ("✅ تایید شد." if action=="approve" else "❌ رد شد."))
+            try: await safe_q_edit(q, (q.message.text or "") + "\n\n" + ("✅ تایید شد." if action=="approve" else "❌ رد شد."))
             except:
                 try: await q.edit_message_reply_markup(reply_markup=None)
                 except: pass
@@ -769,7 +789,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finalize_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = context.user_data
     ev_id = u.get("selected_event_id") or (EVENTS[0]["id"] if EVENTS else None)
-    ev = get_event(ev_id) if ev_id else None
+    ev = get_event(ev_id)
 
     if ev and ev.get("capacity") and remaining_capacity(ev) <= 0:
         await update.effective_chat.send_message(CAPACITY_CANCEL_MSG, reply_markup=reply_main)
@@ -912,6 +932,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, no jobqueue)."}
-
-
+    return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, safe edits, CSV/JSON EVENTS_JSON, no jobqueue)."}
