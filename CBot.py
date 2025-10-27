@@ -36,8 +36,17 @@ MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 # =========================
 #       EVENTS (ENV or default)
 # =========================
-DEFAULT_EVENTS = [
-    {
+KNOWN_EVENTS = {
+    "talk002": {
+        "id": "talk002",
+        "title": "Do humans need religion to live a meaningful life?",
+        "when": "چهارشنبه 30 مهر - 16:30",
+        "place": "Dorna Cafe",
+        "price": "سفارش از کافه",
+        "capacity": 12,
+        "desc": "A warm philosophical conversation on whether meaning in life needs religion."
+    },
+    "talk003": {
         "id": "talk003",
         "title": "Do we fall in love with similarity or difference?",
         "when": "پنجشنبه 8 آبان - 16:30",
@@ -46,22 +55,30 @@ DEFAULT_EVENTS = [
         "capacity": 12,
         "desc": "Sometimes we fall for those who mirror us,\nSometimes for those who complete what we lack.\nWhat kind of love do we truly seek?"
     }
-]
-try:
-    EVENTS = json.loads(os.environ.get("EVENTS_JSON", "") or "[]")
-    if not isinstance(EVENTS, list):
-        EVENTS = DEFAULT_EVENTS
-except:
-    EVENTS = DEFAULT_EVENTS
-if EVENTS == []:
-    # نمایش خالی مجاز است؛ فقط برای دسترسی‌های دیگر هم لیست معتبر بماند
-    EVENTS = []
+}
 
-try:
-    MEETUP_LINKS = json.loads(os.environ.get("MEETUP_LINKS_JSON", "{}"))
-except:
-    MEETUP_LINKS = {}
+# مقدار خام از ENV
+raw_events = os.environ.get("EVENTS_JSON", "").strip()
 
+# تعیین EVENTS
+if not raw_events:
+    # خالی → پیش‌فرض talk003
+    EVENTS = [KNOWN_EVENTS["talk003"]]
+elif raw_events.startswith("["):
+    # JSON لیست کلاسیک
+    try:
+        EVENTS = json.loads(raw_events)
+        if not isinstance(EVENTS, list):
+            EVENTS = [KNOWN_EVENTS["talk003"]]
+    except:
+        EVENTS = [KNOWN_EVENTS["talk003"]]
+else:
+    # فقط ID رو داده مثلاً talk003
+    chosen = raw_events.lower()
+    if chosen in KNOWN_EVENTS:
+        EVENTS = [KNOWN_EVENTS[chosen]]
+    else:
+        EVENTS = [KNOWN_EVENTS["talk003"]]
 # =========================
 #     IN-MEMORY STORAGE
 # =========================
@@ -896,4 +913,5 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, no jobqueue)."}
+
 
