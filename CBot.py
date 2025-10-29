@@ -1,4 +1,5 @@
-# CBot.py — ChillChat Bot (roster@DC1 unchanged, DC2 optimized, safe edits, EVENTS_JSON CSV/JSON)
+# CBot.py — ChillChat Bot
+# DC1 & DC2: real paging, JSON on separate pages, safe edits, CSV/JSON EVENTS_JSON, cancel register
 # python-telegram-bot==20.3, fastapi, uvicorn
 # Python 3.13 compatible (no JobQueue)
 
@@ -15,9 +16,9 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))                         # گروه ادمین/دیتاسنتر تاییدها
-DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))   # لیست تاییدشده‌ها (ROSTER) — بدون تغییر
-DATACENTER2_CHAT_ID = int(os.environ.get("DATACENTER2_CHAT_ID", "0"))             # لیست همه‌ی کاربران (ALL_USERS)
+GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))   # گروه ادمین/دیتاسنتر تاییدها
+DATACENTER_CHAT_ID = int(os.environ.get("DATACENTER_CHAT_ID", str(GROUP_CHAT_ID or 0)))   # DC1 (ROSTER)
+DATACENTER2_CHAT_ID = int(os.environ.get("DATACENTER2_CHAT_ID", "0"))                    # DC2 (ALL_USERS)
 
 SUPPORT_USERNAME = (os.environ.get("SUPPORT_USERNAME") or "ifyoulostme").lstrip("@")
 CHANNEL_URL = os.environ.get("CHANNEL_URL", "")
@@ -31,6 +32,10 @@ ADMIN_SET = {u.lower() for u in ([OWNER_USERNAME] + ADMIN_USERNAMES if OWNER_USE
 
 AUTO_APPROVE_DELAY = int(os.environ.get("AUTO_APPROVE_DELAY", str(12*60*60)))
 SHOW_JSON_IN_PINNED = os.environ.get("SHOW_JSON_IN_PINNED", "1") == "1"
+
+# حداکثر محتوای JSON برای هر صفحه (برای کدبلوک) — اگر طولانی است truncate می‌کنیم
+PINNED_JSON_MAX_CHARS = int(os.environ.get("PINNED_JSON_MAX_CHARS", "1500"))
+
 MALE_LIMIT_PER_EVENT = int(os.environ.get("MALE_LIMIT_PER_EVENT", "5"))
 
 # ---- Default & Preset events
@@ -52,28 +57,26 @@ DEFAULT_EVENTS = [
         "price": "سفارش از کافه",
         "capacity": 12,
         "desc": "Sometimes we fall for those who mirror us,\n"
-                "sometimes for those who complete what we lack.\n"
+                "Sometimes for those who complete what we lack.\n"
                 "What kind of love do we truly seek?",
     },
 ]
-# Map for ID -> object (برای حالت CSV)
 _PRESET_EVENTS = {e["id"]: e for e in DEFAULT_EVENTS}
 
 def _load_events_from_env() -> list:
     raw = os.environ.get("EVENTS_JSON", "").strip()
     if not raw:
         return DEFAULT_EVENTS
-    # اگر JSON واقعی است (با [ شروع می‌شود)
-    if raw.lstrip().startswith("["):
+    if raw.lstrip().startswith("["):  # JSON array
         try:
             arr = json.loads(raw)
             return arr if isinstance(arr, list) else DEFAULT_EVENTS
         except:
             return DEFAULT_EVENTS
-    # در غیراینصورت CSV از IDها مثل: "talk003, talk002"
+    # CSV of IDs
     ids = [x.strip() for x in raw.split(",") if x.strip()]
     evs = [_PRESET_EVENTS[i] for i in ids if i in _PRESET_EVENTS]
-    return evs  # ممکن است خالی برگردد => یعنی هیچ رویدادی نمایش داده نشود
+    return evs  # ممکن است خالی برگردد → یعنی هیچ رویدادی نشان داده نشود
 
 EVENTS = _load_events_from_env()
 
@@ -88,15 +91,18 @@ PENDING = {}          # user_chat_id -> info
 ROSTER = {}           # event_id -> list[ {chat_id,name,username,phone,gender,age,when,event_title} ]
 ALL_USERS = {}        # chat_id -> { id, chat_id, username, name }
 
-# DC1 (روستر) — بدون تغییر
-ROSTER_MESSAGE_ID = None
+# DC1 (Roster) paging
+ROSTER_MESSAGE_ID = None                # صفحه اول (پین)
+ROSTER_PAGE_MESSAGE_IDS = []            # صفحات بعدی
+ROSTER_PAGE_TEXTS = []                  # کش متن صفحات DC1
 
-# DC2 (همه کاربران) — بهینه‌شده
-USERS_MESSAGE_ID = None            # صفحه اول (پین‌شده)
-USERS_PAGE_MESSAGE_IDS = []        # صفحات بعدی
-USERS_PAGE_TEXTS = []              # کش متن هر صفحه برای جلوگیری از ادیت بی‌دلیل
+# DC2 (All Users) paging
+USERS_MESSAGE_ID = None                 # صفحه اول (پین)
+USERS_PAGE_MESSAGE_IDS = []             # صفحات بعدی
+USERS_PAGE_TEXTS = []                   # کش متن صفحات DC2
 
-TELEGRAM_TEXT_LIMIT = 4000         # حاشیه امن (حد واقعی 4096)
+TELEGRAM_HARD_LIMIT = 4096
+TELEGRAM_TEXT_LIMIT = 3900  # حاشیه امن برای متن ساده
 
 # =========================
 #          TEXTS
@@ -130,13 +136,27 @@ def SOCIAL_TEXT():
 #     SAFE EDIT HELPERS
 # =========================
 async def safe_q_edit(q, text, **kwargs):
-    """Edit message but ignore 'message is not modified'."""
     try:
         await q.edit_message_text(text, **kwargs)
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             return
         raise
+
+async def _safe_edit(bot, chat_id: int, message_id: int, new_text: str, old_text: str|None):
+    if old_text is not None and old_text == new_text:
+        return False
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text)
+        return True
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return False
+        print("edit failed:", e)
+        return False
+    except Exception as e:
+        print("edit failed (generic):", e)
+        return False
 
 # =========================
 #          HELPERS
@@ -146,7 +166,6 @@ def is_admin_user(user) -> bool:
     return bool(u and u in ADMIN_SET)
 
 def add_user(user, chat_id: int):
-    """ثبت/آپدیت کاربر برای ALL_USERS (برای دمال/برودکست سراسری)."""
     if not chat_id: return
     ALL_USERS[chat_id] = {
         "id": getattr(user, "id", None),
@@ -179,12 +198,44 @@ def _extract_json(text):
     try: return json.loads(m.group(1))
     except: return None
 
+# ---- paging utils
+def _paginate_lines(header: str, lines: list[str], limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    pages = []
+    cur = header
+    for ln in lines:
+        cand = cur + "\n" + ln
+        if len(cand) > limit:
+            pages.append(cur)
+            cur = header + "\n" + ln
+        else:
+            cur = cand
+    if cur:
+        pages.append(cur)
+    return pages or [header]
+
+def _json_pages(title: str, obj: dict | list, limit: int = TELEGRAM_TEXT_LIMIT, chunk_chars: int = PINNED_JSON_MAX_CHARS) -> list[str]:
+    """Break JSON to multiple pages with code-fence, each page ≤ limit."""
+    s = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    # chunk long json
+    chunks = [s[i:i+chunk_chars] for i in range(0, len(s), chunk_chars)] or [""]
+    pages = []
+    for i, ch in enumerate(chunks, 1):
+        body = f"{title} (p{i}/{len(chunks)})\n\n```json\n{ch}\n```"
+        if len(body) > limit:
+            # last resort: shrink chunk to fit
+            room = max(200, limit - len(title) - 20)
+            ch2 = ch[:room]
+            body = f"{title} (p{i}/{len(chunks)})\n\n```json\n{ch2}\n```"
+        pages.append(body)
+    return pages
+
 # =========================
-#    PINNED — DC1 (Roster)  [بدون تغییر]
+#    PINNED — DC1 (Roster)  [paged + JSON pages]
 # =========================
-def _human_roster():
-    if not ROSTER: return "📋 لیست تاییدشده‌ها (DataCenter #1)\n— هنوز کسی تایید نشده."
-    L = ["📋 لیست تاییدشده‌ها (DataCenter #1)"]
+def _human_roster_lines() -> list[str]:
+    if not ROSTER:
+        return ["— هنوز کسی تایید نشده."]
+    L = []
     for e in EVENTS:
         eid = e["id"]; ppl = ROSTER.get(eid, [])
         L.append(f"\n🗓 {e['title']} — {e['when']} | تاییدشده‌ها: {len(ppl)} (آقایان: {male_count(eid)})")
@@ -194,37 +245,68 @@ def _human_roster():
             for i, r in enumerate(ppl, 1):
                 uname = f"@{r['username']}" if r.get("username") else "—"
                 L.append(f"  {i}. {r['name']} | {uname} | {r.get('phone','—')}")
-    return "\n".join(L)
+    return L
+
+def _roster_pages() -> list[str]:
+    header = "📋 لیست تاییدشده‌ها (DataCenter #1)"
+    pages = _paginate_lines(header, _human_roster_lines(), TELEGRAM_TEXT_LIMIT)
+    if SHOW_JSON_IN_PINNED:
+        meta = {"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS],
+                "roster": ROSTER}
+        pages += _json_pages("📦 Roster JSON", meta, TELEGRAM_TEXT_LIMIT, PINNED_JSON_MAX_CHARS)
+    return pages
 
 async def save_roster_pinned(app):
-    """ذخیره/ویرایش لیست تاییدشده‌ها در DC1 (بدون تغییرات رفتاری)."""
-    global ROSTER_MESSAGE_ID
+    global ROSTER_MESSAGE_ID, ROSTER_PAGE_MESSAGE_IDS, ROSTER_PAGE_TEXTS
     if not DATACENTER_CHAT_ID: return
-    human = _human_roster()
-    if SHOW_JSON_IN_PINNED:
-        human += "\n\n---\n```json\n" + json.dumps(
-            {"events":[{"id":e["id"],"capacity":e.get("capacity"),"title":e["title"],"when":e["when"]} for e in EVENTS],
-             "roster":ROSTER},
-            ensure_ascii=False
-        ) + "\n```"
-    try:
-        if ROSTER_MESSAGE_ID:
-            await app.bot.edit_message_text(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, text=human)
-            return
-    except Exception as e:
-        print("edit roster pinned failed:", e)
-    m = await app.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=human)
-    ROSTER_MESSAGE_ID = m.message_id
-    try:
-        await app.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
-    except Exception as e:
-        print("pin roster failed:", e)
+    pages = _roster_pages()
+
+    # ensure cache size
+    while len(ROSTER_PAGE_TEXTS) < len(pages):
+        ROSTER_PAGE_TEXTS.append(None)
+
+    # first page (pin)
+    if ROSTER_MESSAGE_ID:
+        changed = await _safe_edit(app.bot, DATACENTER_CHAT_ID, ROSTER_MESSAGE_ID, pages[0], ROSTER_PAGE_TEXTS[0])
+        if changed or ROSTER_PAGE_TEXTS[0] is None:
+            ROSTER_PAGE_TEXTS[0] = pages[0]
+    else:
+        m = await app.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=pages[0])
+        ROSTER_MESSAGE_ID = m.message_id
+        ROSTER_PAGE_TEXTS[0] = pages[0]
+        try:
+            await app.bot.pin_chat_message(chat_id=DATACENTER_CHAT_ID, message_id=ROSTER_MESSAGE_ID, disable_notification=True)
+        except Exception as e:
+            print("pin roster first page failed:", e)
+
+    # subsequent pages
+    needed = max(0, len(pages) - 1)
+
+    # edit existing pages
+    for i in range(min(needed, len(ROSTER_PAGE_MESSAGE_IDS))):
+        mid = ROSTER_PAGE_MESSAGE_IDS[i]
+        changed = await _safe_edit(app.bot, DATACENTER_CHAT_ID, mid, pages[i+1], ROSTER_PAGE_TEXTS[i+1])
+        if changed or ROSTER_PAGE_TEXTS[i+1] is None:
+            ROSTER_PAGE_TEXTS[i+1] = pages[i+1]
+
+    # create new pages if needed
+    if needed > len(ROSTER_PAGE_MESSAGE_IDS):
+        for i in range(len(ROSTER_PAGE_MESSAGE_IDS), needed):
+            m = await app.bot.send_message(chat_id=DATACENTER_CHAT_ID, text=pages[i+1])
+            ROSTER_PAGE_MESSAGE_IDS.append(m.message_id)
+            if len(ROSTER_PAGE_TEXTS) <= i+1:
+                ROSTER_PAGE_TEXTS.append(None)
+            ROSTER_PAGE_TEXTS[i+1] = pages[i+1]
+
+    # shrink cache if fewer pages now (do not delete extra messages)
+    if len(ROSTER_PAGE_TEXTS) > len(pages):
+        ROSTER_PAGE_TEXTS = ROSTER_PAGE_TEXTS[:len(pages)]
 
 async def restore_roster_from_pinned(app):
-    """Restore roster/message_id from DATACENTER_CHAT_ID."""
     global ROSTER_MESSAGE_ID, ROSTER
     if not DATACENTER_CHAT_ID: return
-    try: chat: Chat = await app.bot.get_chat(DATACENTER_CHAT_ID)
+    try:
+        chat: Chat = await app.bot.get_chat(DATACENTER_CHAT_ID)
     except Exception as e:
         print("restore roster get_chat:", e); return
     pm = getattr(chat, "pinned_message", None)
@@ -233,62 +315,33 @@ async def restore_roster_from_pinned(app):
     if data and isinstance(data.get("roster"), dict):
         ROSTER = data["roster"]
     ROSTER_MESSAGE_ID = pm.message_id
+    # سایر صفحات پس از اولین save ساخته/ادیت می‌شوند
 
 # =========================
-#    PINNED — DC2 (All Users)  [بهینه‌شده]
+#    PINNED — DC2 (All Users)  [paged + JSON pages]
 # =========================
 def _lines_for_users():
-    """بساز خطوط لیست کاربران با شماره‌گذاری پیوسته، عدم تگ‌کردن ادمین‌ها."""
     lines = []
     for idx, (cid, info) in enumerate(ALL_USERS.items(), 1):
         u = (info.get("username") or "")
         n = info.get("name") or "—"
         uid = info.get("id")
-        # اگر ادمین است، بدون @؛ اگر کاربر عادی است و یوزرنیم دارد، با @
         if u and u.lower() in ADMIN_SET:
-            uname_disp = u                 # بدون @
+            uname_disp = u                 # بدون @ برای ادمین‌ها
         else:
             uname_disp = ("@" + u) if u else ""
         lines.append(f"{idx}. {n} {uname_disp} | chat_id={cid} | id={uid}")
     return lines
 
 def _human_users_pages():
-    """متن را به چند صفحه تقسیم می‌کند که هر صفحه <= TELEGRAM_TEXT_LIMIT باشد."""
     header = f"👥 همهٔ کاربران (DataCenter #2) — {len(ALL_USERS)} نفر"
-    lines = _lines_for_users()
-    pages = []
-    current = header
-    for ln in lines:
-        candidate = current + "\n" + ln
-        if len(candidate) > TELEGRAM_TEXT_LIMIT:
-            pages.append(current)
-            current = header + "\n" + ln    # هر صفحه با هدر شروع می‌شود
-        else:
-            current = candidate
-    if current: pages.append(current)
-    # JSON فقط در صفحه اول
-    if SHOW_JSON_IN_PINNED and pages:
-        pages[0] += "\n\n---\n```json\n" + json.dumps({"all_users": {str(cid): ALL_USERS[cid] for cid in ALL_USERS}}, ensure_ascii=False) + "\n```"
-    return pages
-
-async def _safe_edit(bot, chat_id: int, message_id: int, new_text: str, old_text: str|None):
-    """ادیت فقط وقتی لازم است؛ و خطای 'message is not modified' را بی‌صدا نادیده می‌گیرد."""
-    if old_text is not None and old_text == new_text:
-        return False  # نیازی به ادیت نیست
-    try:
-        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text)
-        return True
-    except BadRequest as e:
-        if "message is not modified" in str(e).lower():
-            return False
-        print("edit failed:", e)
-        return False
-    except Exception as e:
-        print("edit failed (generic):", e)
-        return False
+    pages = _paginate_lines(header, _lines_for_users(), TELEGRAM_TEXT_LIMIT)
+    if SHOW_JSON_IN_PINNED:
+        pages += _json_pages("📦 All Users JSON", {"all_users": {str(cid): ALL_USERS[cid] for cid in ALL_USERS}},
+                             TELEGRAM_TEXT_LIMIT, PINNED_JSON_MAX_CHARS)
+    return pages or [header]
 
 async def save_users_pinned(app):
-    """Save all users to DATACENTER2_CHAT_ID با صفحه‌بندی و حذف ادیت‌های اضافی."""
     global USERS_MESSAGE_ID, USERS_PAGE_MESSAGE_IDS, USERS_PAGE_TEXTS
     if not DATACENTER2_CHAT_ID: return
 
@@ -296,11 +349,10 @@ async def save_users_pinned(app):
     if not pages:
         pages = ["👥 همهٔ کاربران (DataCenter #2)\n— هنوز کسی بات را استارت نکرده."]
 
-    # اطمینان از اندازه کش
     while len(USERS_PAGE_TEXTS) < len(pages):
         USERS_PAGE_TEXTS.append(None)
 
-    # صفحه اول: ادیت فقط اگر متن عوض شده
+    # first page (pin)
     if USERS_MESSAGE_ID:
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, USERS_MESSAGE_ID, pages[0], USERS_PAGE_TEXTS[0])
         if changed or USERS_PAGE_TEXTS[0] is None:
@@ -314,17 +366,15 @@ async def save_users_pinned(app):
         except Exception as e:
             print("pin users first page failed:", e)
 
-    # صفحات بعدی: ادیت/ایجاد فقط اگر متن عوض شده
+    # subsequent pages
     needed = max(0, len(pages) - 1)
 
-    # ادیت صفحات موجود
     for i in range(min(needed, len(USERS_PAGE_MESSAGE_IDS))):
         mid = USERS_PAGE_MESSAGE_IDS[i]
         changed = await _safe_edit(app.bot, DATACENTER2_CHAT_ID, mid, pages[i+1], USERS_PAGE_TEXTS[i+1])
         if changed or USERS_PAGE_TEXTS[i+1] is None:
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
-    # ساخت صفحات جدید در صورت نیاز
     if needed > len(USERS_PAGE_MESSAGE_IDS):
         for i in range(len(USERS_PAGE_MESSAGE_IDS), needed):
             m = await app.bot.send_message(chat_id=DATACENTER2_CHAT_ID, text=pages[i+1])
@@ -333,17 +383,16 @@ async def save_users_pinned(app):
                 USERS_PAGE_TEXTS.append(None)
             USERS_PAGE_TEXTS[i+1] = pages[i+1]
 
-    # اگر صفحات کمتر شد، کش را کوتاه کن (پیام‌های اضافه را دست نمی‌زنیم)
     if len(USERS_PAGE_TEXTS) > len(pages):
         USERS_PAGE_TEXTS = USERS_PAGE_TEXTS[:len(pages)]
 
 async def restore_users_from_pinned(app):
-    """Restore all_users/message_id (first page pinned) from DATACENTER2_CHAT_ID."""
     global USERS_MESSAGE_ID, ALL_USERS, USERS_PAGE_MESSAGE_IDS, USERS_PAGE_TEXTS
     USERS_PAGE_MESSAGE_IDS = []
     USERS_PAGE_TEXTS = []
     if not DATACENTER2_CHAT_ID: return
-    try: chat: Chat = await app.bot.get_chat(DATACENTER2_CHAT_ID)
+    try:
+        chat: Chat = await app.bot.get_chat(DATACENTER2_CHAT_ID)
     except Exception as e:
         print("restore users get_chat:", e); return
     pm = getattr(chat, "pinned_message", None)
@@ -392,7 +441,6 @@ def age_inline():
     return MK([[B("➖ ترجیح می‌دهم نگویم", callback_data="age_na")],[B("↩️ بازگشت به مرحله قبل", callback_data="back_step")]])
 
 def event_inline(ev_id):
-    # ثبت‌نام + لغو ثبت‌نام
     return MK([
         [B("📝 ثبت‌نام در همین رویداد", callback_data=f"register_{ev_id}")],
         [B("❌ لغو ثبت‌نام", callback_data=f"cancel_{ev_id}")],
@@ -499,12 +547,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await render_home(update, context)
 
 async def cmd_testpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await save_roster_pinned(context.application)   # DC1 بدون تغییر
-    await save_users_pinned(context.application)    # DC2 بهینه‌شده
+    await save_roster_pinned(context.application)   # DC1
+    await save_users_pinned(context.application)    # DC2
     await update.message.reply_text("✅ هر دو لیست ساخته/آپدیت و پین شد.")
 
 async def cmd_roster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📋 وضعیت فعلی:\n\n" + _human_roster()[:3800])
+    # یک برش کوتاه برای نمایش سریع
+    header = "📋 وضعیت فعلی (خلاصه):"
+    preview = "\n".join(_human_roster_lines())[:3600]
+    await update.message.reply_text(f"{header}\n\n{preview}" if preview else f"{header}\n— خالی —")
 
 def _is_dc_admin(update: Update):
     return (update.effective_chat.id in {DATACENTER_CHAT_ID, GROUP_CHAT_ID}) and is_admin_user(update.effective_user)
@@ -517,13 +568,11 @@ async def cmd_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not m: return await update.message.reply_text("فرمت: /dm @username پیام")
     target, msg = m.group(1), m.group(2).strip()
     chat_id = None
-    # از ROSTER
     for ppl in ROSTER.values():
         for r in ppl:
             if (r.get("username") or "").lower() == target.lower():
                 chat_id = r.get("chat_id"); break
         if chat_id: break
-    # از ALL_USERS
     if not chat_id:
         for cid, info in ALL_USERS.items():
             if (info.get("username") or "").lower() == target.lower():
@@ -577,7 +626,6 @@ async def shortcut_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; data = q.data
     await q.answer()
-    # ثبت کاربر و آپدیت دیتاسنتر۲
     add_user(q.from_user, q.message.chat.id if q.message else update.effective_chat.id)
     await save_users_pinned(context.application)
 
@@ -617,24 +665,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "accept_rules": return await render_name(update, context, edit=True)
 
-    # لغو ثبت‌نام (شروع و تایید)
+    # لغو ثبت‌نام
     if data.startswith("cancel_yes_") or data == "cancel_no" or data.startswith("cancel_"):
         if data.startswith("cancel_") and not data.startswith("cancel_yes_"):
             ev_id = data.split("_",1)[1]
             ev = get_event(ev_id)
             if not ev: return await q.answer("رویداد پیدا نشد.", show_alert=True)
-            return await safe_q_edit(
-                q,
-                f"آیا مطمئن هستی ثبت‌نامت در «{ev.get('title','')}» لغو شود؟",
-                reply_markup=event_inline_confirm_cancel(ev_id)
-            )
+            return await safe_q_edit(q, f"آیا مطمئن هستی ثبت‌نامت در «{ev.get('title','')}» لغو شود؟", reply_markup=event_inline_confirm_cancel(ev_id))
         if data == "cancel_no":
             return await render_event_list(update)
         if data.startswith("cancel_yes_"):
-            # پشتیبانی هر دو قالب cancel_yes_x و cancel_yes__x
             parts = data.split("_")
             ev_id = parts[-1]
-            ev = get_event(ev_id)
             user_chat_id = update.effective_chat.id
             lst = ROSTER.get(ev_id, [])
             new_lst = [r for r in lst if r.get("chat_id") != user_chat_id]
@@ -898,7 +940,7 @@ application = ApplicationBuilder().token(BOT_TOKEN).job_queue(None).build()
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^شروع\s*مجدد(?:\s*🔄)?$"), shortcut_restart))
 
-# Admin commands (ارسال پیام‌ها) — فقط در دیتاسنتر/گروه ادمین
+# Admin commands
 application.add_handler(CommandHandler("dm",      cmd_dm))
 application.add_handler(CommandHandler("dmevent", cmd_dmevent))
 application.add_handler(CommandHandler("dmall",   cmd_dmall))
@@ -915,7 +957,7 @@ async def lifespan(app: FastAPI):
     await application.initialize()
     if WEBHOOK_URL: await application.bot.set_webhook(url=WEBHOOK_URL)
     await application.start()
-    # بازیابی از هر دو دیتاسنتر
+    # بازیابی
     await restore_roster_from_pinned(application)  # DC1
     await restore_users_from_pinned(application)   # DC2
     yield
@@ -932,4 +974,4 @@ async def webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status":"ChillChat bot running (DC1 unchanged, DC2 optimized: no redundant edits, paging, cancel register, safe edits, CSV/JSON EVENTS_JSON, no jobqueue)."}
+    return {"status":"ChillChat bot running (DC1+DC2 paged, JSON on separate pages, safe edits, CSV/JSON EVENTS_JSON, cancel register, no jobqueue)."}
